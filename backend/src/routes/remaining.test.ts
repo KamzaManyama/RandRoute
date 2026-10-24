@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import request from "supertest";
-import { createApp } from "../app.js";
+import { createApp } from "../createApp.js";
 import { loadConfig } from "../config/env.js";
 import type { GeminiService } from "../lib/gemini.js";
 import type { SupabaseClients } from "../lib/supabase.js";

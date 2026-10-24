@@ -1,5 +1,6 @@
 // Local development entry point: `npm run dev` / `npm start`.
 // On Vercel the app is served from src/index.ts instead (no listen()).
+// (Named devServer.ts so Vercel never mistakes it for the deployed entry point.)
 import { buildApp } from "./bootstrap.js";
 
 let built;

@@ -913,8 +913,9 @@ RandRoute/
 │   │   ├── lib/              # Supabase and Gemini clients
 │   │   ├── middleware/       # auth check, error handling
 │   │   ├── routes/           # API routes
-│   │   ├── app.ts            # builds the Express app
-│   │   └── server.ts         # starts the server
+│   │   ├── createApp.ts      # builds the Express app
+│   │   ├── devServer.ts      # starts the server locally (npm run dev)
+│   │   └── index.ts          # Vercel entry point (exports the app)
 │   ├── scripts/verify-migrations.mjs   # tests the SQL in an in-memory Postgres
 │   └── .env.example
 └── frontend/                 # React + Vite + TypeScript (calls the backend only)
