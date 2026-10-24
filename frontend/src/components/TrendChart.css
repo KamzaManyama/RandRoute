@@ -1,0 +1,130 @@
+.trend {
+  margin: 0;
+}
+
+.trend__plot {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-2);
+}
+
+/* Recessive axis: two muted ticks, no gridlines */
+.trend__axis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 140px;
+  font-size: 0.72rem;
+  color: var(--color-muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.trend__columns {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  border-bottom: 1px solid var(--color-border);
+  min-width: 0;
+}
+
+.trend__slot {
+  position: relative;
+  display: grid;
+  grid-template-rows: 140px auto;
+  justify-items: center;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.trend__slot:hover .trend__track,
+.trend__slot:focus-visible .trend__track {
+  background: var(--color-surface-muted);
+}
+
+.trend__track {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+
+/* Column: ≤24px wide, 4px rounded data-end, square at the baseline */
+.trend__bar {
+  width: min(24px, 60%);
+  background: var(--color-ink);
+  border-radius: 4px 4px 0 0;
+  transition: height 200ms ease;
+}
+
+.trend__bar--partial {
+  background: var(--color-muted);
+  opacity: 0.55;
+}
+
+.trend__slot--selected .trend__bar--full {
+  background: var(--color-ink);
+}
+
+.trend__slot:not(.trend__slot--selected) .trend__bar--full {
+  background: #6b6b6b;
+}
+
+.trend__value {
+  position: absolute;
+  transform: translateY(-4px);
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--color-ink);
+  white-space: nowrap;
+}
+
+.trend__label {
+  display: grid;
+  justify-items: center;
+  padding-top: 6px;
+  font-size: 0.8rem;
+  color: var(--color-muted);
+  line-height: 1.2;
+}
+
+.trend__slot--selected .trend__label {
+  color: var(--color-ink);
+  font-weight: 700;
+}
+
+.trend__label small {
+  font-size: 0.68rem;
+}
+
+.trend__tooltip {
+  position: absolute;
+  bottom: calc(100% - 20px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: grid;
+  gap: 2px;
+  min-width: 140px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-float);
+  font-size: 0.8rem;
+  text-align: left;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trend__bar {
+    transition: none;
+  }
+}

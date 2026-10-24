@@ -91,7 +91,7 @@ export type DashboardSummary = {
   unclassifiedIn: number
   budgetTarget: number | null
   budgetRemaining: number | null
-  topCategories: Array<{ name: string; total: number; count: number }>
+  topCategories: Array<{ categoryId: string | null; name: string; total: number; count: number }>
   recentTransactions: Array<{
     id: string
     date: string

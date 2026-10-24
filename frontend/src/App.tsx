@@ -13,6 +13,7 @@ import { StatementsPage } from './pages/StatementsPage'
 import { UploadStatementPage } from './pages/statements/UploadStatementPage'
 import { StatementDetailPage } from './pages/statements/StatementDetailPage'
 import { SpendingPage } from './pages/SpendingPage'
+import { TransactionDetailPage } from './pages/TransactionDetailPage'
 import { BudgetPage } from './pages/BudgetPage'
 import { InsightsPage } from './pages/InsightsPage'
 import { ProfilePage } from './pages/ProfilePage'
@@ -36,10 +37,8 @@ export default function App() {
         <Route path="statements" element={<StatementsPage />} />
         <Route path="statements/upload" element={<UploadStatementPage />} />
         <Route path="statements/:id" element={<StatementDetailPage />} />
-        <Route
-          path="spending"
-          element={<SpendingPage />}
-        />
+        <Route path="spending" element={<SpendingPage />} />
+        <Route path="spending/:id" element={<TransactionDetailPage />} />
         <Route
           path="budget"
           element={<BudgetPage />}

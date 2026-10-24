@@ -1,72 +1,50 @@
 import { useAuth } from '../auth/useAuth'
-import './ProfilePage.css'
+import { PageHeader } from '../components/ui'
 
+const privacyItems = [
+  { title: 'Data handling', text: 'RandRoute keeps the cleaned transactions you confirm — never your PDFs or account numbers.', action: 'Review' },
+  { title: 'AI consent', text: 'AI explanations are opt-in and can be turned off at any time.', action: 'Manage' },
+  { title: 'Export', text: 'Download your transactions and budgets as a file.', action: 'Export' },
+  { title: 'Delete account', text: 'Permanently remove your account and all saved financial data.', action: 'Delete', danger: true },
+]
+
+/** Screen 16 — Profile and privacy settings (preview). */
 export function ProfilePage() {
   const { user } = useAuth()
   return (
-    <div className="profile">
-      <header className="profile__header">
-        <div>
-          <p className="muted">Account</p>
-          <h1>Profile & privacy</h1>
-        </div>
-        <button type="button" className="button button--ghost">
-          Edit profile
-        </button>
-      </header>
+    <div className="page">
+      <PageHeader eyebrow="Account" title="Profile & privacy" />
 
       <p className="preview-banner" role="note">
-        Editing, export and deletion are coming soon — these buttons don't do anything yet.
+        Editing, export and deletion are coming soon — these buttons don&apos;t do anything yet.
       </p>
 
-      <section className="card profile__card">
-        <div className="profile__summary">
-          <div>
-            <p className="muted">Display name</p>
-            <h2>{user?.displayName ?? 'Not set'}</h2>
-          </div>
-          <div>
-            <p className="muted">Email</p>
-            <h2>{user?.email ?? ''}</h2>
-          </div>
-          <div>
-            <p className="muted">Currency</p>
-            <h2>ZAR</h2>
-          </div>
-        </div>
+      <section className="card">
+        <h2 className="section-title">Your details</h2>
+        <dl className="detail__facts">
+          <dt>Name</dt>
+          <dd>{user?.displayName ?? 'Not set'}</dd>
+          <dt>Email</dt>
+          <dd>{user?.email ?? ''}</dd>
+          <dt>Currency</dt>
+          <dd>South African rand (ZAR)</dd>
+        </dl>
       </section>
 
-      <section className="card profile__section">
-        <h2 className="section-title">Privacy & data</h2>
-        <ul className="profile__list">
-          <li>
-            <div>
-              <strong>Data handling</strong>
-              <small>RandRoute keeps imported statement records and calculated summaries only.</small>
-            </div>
-            <button type="button" className="button button--ghost">Review</button>
-          </li>
-          <li>
-            <div>
-              <strong>Consent</strong>
-              <small>AI assistance remains opt-in and can be turned off at any point.</small>
-            </div>
-            <button type="button" className="button button--ghost">Manage</button>
-          </li>
-          <li>
-            <div>
-              <strong>Export</strong>
-              <small>Download your transaction and budget data as a CSV summary.</small>
-            </div>
-            <button type="button" className="button button--ghost">Export</button>
-          </li>
-          <li>
-            <div>
-              <strong>Delete account</strong>
-              <small>Permanently remove your account and saved financial data.</small>
-            </div>
-            <button type="button" className="button button--ghost danger-button">Delete</button>
-          </li>
+      <section className="card">
+        <h2 className="section-title">Privacy &amp; data</h2>
+        <ul className="list">
+          {privacyItems.map((item) => (
+            <li key={item.title} className="list-row">
+              <span className="list-row__main">
+                <span className="list-row__title">{item.title}</span>
+                <span className="list-row__meta">{item.text}</span>
+              </span>
+              <button type="button" className={`button button--small ${item.danger ? 'button--danger' : 'button--ghost'}`} disabled>
+                {item.action}
+              </button>
+            </li>
+          ))}
         </ul>
       </section>
     </div>

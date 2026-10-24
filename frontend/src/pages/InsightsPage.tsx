@@ -1,86 +1,64 @@
-import './InsightsPage.css'
+import { PageHeader, Stat, Stats } from '../components/ui'
 
-type InsightItem = {
-  label: string
-  value: string
-  tone: 'positive' | 'negative' | 'neutral'
-}
-
-const summary: InsightItem[] = [
-  { label: 'Spending change', value: '+6.2%', tone: 'negative' },
-  { label: 'Top category', value: 'Housing', tone: 'neutral' },
-  { label: 'Budget status', value: '3 categories over', tone: 'negative' },
-  { label: 'Coverage', value: 'Partial month', tone: 'neutral' },
-]
-
+// Sample content until Insights is connected (Roadmap phases 5–6).
 const trends = [
   { name: 'Groceries', change: '+12%', detail: 'Higher weekly food costs this month', tone: 'negative' },
-  { name: 'Transport', change: '+8%', detail: 'More fuel and commute days', tone: 'negative' },
-  { name: 'Dining', change: '-5%', detail: 'Fewer takeaways than last month', tone: 'positive' },
-  { name: 'Health', change: '+2%', detail: 'Routine costs remained steady', tone: 'neutral' },
+  { name: 'Transport & fuel', change: '+8%', detail: 'More fuel and commute days', tone: 'negative' },
+  { name: 'Eating out & takeaways', change: '−5%', detail: 'Fewer takeaways than last month', tone: 'positive' },
+  { name: 'Medical & pharmacy', change: '+2%', detail: 'Routine costs stayed steady', tone: '' },
 ]
 
+/** Screen 14 — Monthly insights (preview). Opening this page never calls AI. */
 export function InsightsPage() {
   return (
-    <div className="insights">
-      <header className="insights__header">
-        <div>
-          <p className="muted">Trend overview</p>
-          <h1>Insights</h1>
-        </div>
-        <button type="button" className="button">
-          Explain this trend
-        </button>
-      </header>
+    <div className="page">
+      <PageHeader
+        eyebrow="Trend overview"
+        title="Insights"
+        actions={
+          <button type="button" className="button" disabled>
+            Explain this trend
+          </button>
+        }
+      />
 
       <p className="preview-banner" role="note">
-        Preview with sample numbers — this page isn't connected to your statements yet.
+        Preview with sample numbers — this page isn&apos;t connected to your statements yet.
       </p>
 
-      <section className="card">
-        <div className="insights__summary">
-          {summary.map((item) => (
-            <div key={item.label} className="insights__stat">
-              <span>{item.label}</span>
-              <strong className={item.tone === 'negative' ? 'negative' : item.tone === 'positive' ? 'positive' : ''}>
-                {item.value}
-              </strong>
-            </div>
-          ))}
-        </div>
-      </section>
+      <Stats label="Insight summary">
+        <Stat label="Spending change" value="+6.2%" tone="negative" />
+        <Stat label="Top category" value="Rent & bond" />
+        <Stat label="Budget status" value="2 over" tone="negative" />
+        <Stat label="Coverage" value="Partial month" tone="warn" />
+      </Stats>
 
-      <div className="insights__content">
+      <div className="columns">
         <section className="card">
           <h2 className="section-title">Spending changes</h2>
-          <ul className="insights__list">
-            {trends.map((trend) => (
-              <li key={trend.name}>
-                <div>
-                  <strong>{trend.name}</strong>
-                  <small>{trend.detail}</small>
-                </div>
-                <span className={trend.tone === 'negative' ? 'negative' : trend.tone === 'positive' ? 'positive' : 'muted'}>
-                  {trend.change}
+          <ul className="list">
+            {trends.map((t) => (
+              <li key={t.name} className="list-row">
+                <span className="list-row__main">
+                  <span className="list-row__title">{t.name}</span>
+                  <span className="list-row__meta">{t.detail}</span>
                 </span>
+                <span className={`list-row__value ${t.tone}`}>{t.change}</span>
               </li>
             ))}
           </ul>
         </section>
 
-        <section className="card insights__panel">
+        <section className="card stack">
           <h2 className="section-title">What this means</h2>
           <p className="muted">
-            Your spending is up mainly because food, travel, and routine household costs rose over the last month.
-            A few categories are over budget, but this view reflects partial statement coverage and should be treated as a
-            working summary.
+            Spending rose mainly because food and transport cost more. This view reflects partial statement coverage, so
+            treat it as a working summary.
           </p>
-          <div className="insights__note">
-            <strong>AI note</strong>
-            <p>
-              RandRoute does not call Gemini until you explicitly ask for an explanation or budget suggestion.
-            </p>
-          </div>
+          <p className="preview-banner">
+            <strong>About AI:</strong> RandRoute only asks Gemini for an explanation when you press &ldquo;Explain this
+            trend&rdquo; — never just by opening this page.
+          </p>
         </section>
       </div>
     </div>

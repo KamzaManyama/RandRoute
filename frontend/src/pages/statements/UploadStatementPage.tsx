@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useApi, type BankFormat } from '../../lib/useApi'
 import { ApiError } from '../../lib/api'
 import { FormAlert, TextField } from '../../components/forms'
+import { PageHeader } from '../../components/ui'
 import { ShieldIcon, StatementsIcon } from '../../components/icons'
 import './statements.css'
 
@@ -121,17 +122,14 @@ export function UploadStatementPage() {
 
   return (
     <div className="page">
-      <header className="page-header">
-        <div>
-          <p className="muted">
-            <Link to="/statements" className="auth__link">
-              Statements
-            </Link>{' '}
-            / Upload
-          </p>
-          <h1>Upload a statement</h1>
-        </div>
-      </header>
+      <PageHeader
+        eyebrow={
+          <>
+            <Link to="/statements">Statements</Link> / Upload
+          </>
+        }
+        title="Upload a statement"
+      />
 
       <form className="card upload-form" onSubmit={onSubmit} noValidate>
         {error && <FormAlert>{error}</FormAlert>}

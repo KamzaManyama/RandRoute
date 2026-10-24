@@ -30,7 +30,7 @@ for (const f of fs.readdirSync(migDir).sort()) {
   console.log("applied", f);
 }
 // Seed twice to prove it is idempotent
-await db.exec(fs.readFileSync(path.join(migDir, fs.readdirSync(migDir).sort().at(-1)), "utf8"));
+await db.exec(fs.readFileSync(path.join(migDir, fs.readdirSync(migDir).find((f) => f.includes("seed_categories"))), "utf8"));
 
 const A = "11111111-1111-1111-1111-111111111111";
 const B = "22222222-2222-2222-2222-222222222222";
@@ -135,6 +135,17 @@ await db.exec(`delete from auth.users where id='${B}'`);
 check("deleting auth user cascades everything",
   (await db.query(`select count(*)::int n from public.categories where user_id='${B}'`)).rows[0].n === 0 &&
   (await db.query(`select count(*)::int n from public.user_preferences where user_id='${B}'`)).rows[0].n === 0);
+
+// Account deletion with saved transactions (cascades through imports + transactions)
+const C = "33333333-3333-3333-3333-333333333333";
+await db.exec(`insert into auth.users (id, email) values ('${C}', 'c@x.co')`);
+const impC = (await one(C, `insert into public.statement_imports (bank_format_key, period_start, period_end) values ('fnb','2026-09-01','2026-09-30') returning id`)).id;
+await as(C, `insert into public.staged_transactions (import_id,row_index,transaction_date,cleaned_description,amount_minor,direction) values ('${impC}',0,'2026-09-02','x',10,'outflow'),('${impC}',1,'2026-09-03','y',20,'outflow')`);
+await as(C, `select public.confirm_import('${impC}')`);
+let deleteError = null;
+try { await db.exec(`delete from auth.users where id='${C}'`); } catch (e) { deleteError = e.message; }
+check("deleting an account with saved transactions works" + (deleteError ? " (" + deleteError + ")" : ""), deleteError === null &&
+  (await db.query(`select count(*)::int n from public.transactions where user_id='${C}'`)).rows[0].n === 0);
 
 console.log(failures ? `\n${failures} FAILED` : "\nAll SQL checks passed");
 process.exit(failures ? 1 : 0);

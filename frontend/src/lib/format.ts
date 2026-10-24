@@ -40,3 +40,25 @@ export function monthLabel(month: string): string {
   if (!y || !m) return month
   return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString('en-ZA', { month: 'long', year: 'numeric', timeZone: 'UTC' })
 }
+
+export function currentMonth(): string {
+  return new Date().toISOString().slice(0, 7)
+}
+
+export function isMonth(value: string | null | undefined): value is string {
+  return Boolean(value && /^\d{4}-(0[1-9]|1[0-2])$/.test(value))
+}
+
+export function shiftMonth(month: string, by: number): string {
+  const [y, m] = month.split('-').map(Number) as [number, number]
+  return new Date(Date.UTC(y, m - 1 + by, 1)).toISOString().slice(0, 7)
+}
+
+/** "+12%" / "−8%" for a change; "New" when there was nothing before. */
+export function changeLabel(changePercent: number | null, previousTotal: number | null): string | null {
+  if (previousTotal === null) return null
+  if (previousTotal === 0) return 'New this month'
+  if (changePercent === null) return null
+  if (changePercent === 0) return 'Same as last month'
+  return `${changePercent > 0 ? '+' : '−'}${Math.abs(changePercent)}% vs last month`
+}

@@ -2,18 +2,6 @@
   min-height: 100vh;
 }
 
-.icon-button {
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  border: 0;
-  border-radius: 50%;
-  background: var(--color-surface);
-  box-shadow: var(--shadow-card);
-  cursor: pointer;
-}
-
 /* ---- Sidebar ---- */
 .sidebar {
   position: fixed;

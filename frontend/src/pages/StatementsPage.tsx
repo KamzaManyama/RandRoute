@@ -5,7 +5,8 @@ import { ApiError } from '../lib/api'
 import { formatDate, formatPeriod } from '../lib/format'
 import { FormAlert } from '../components/forms'
 import { isReviewing, STATUS_INFO } from './statements/statementStatus'
-import './StatementsPage.css'
+import { Chips, EmptyState, PageHeader, Stat, Stats } from '../components/ui'
+import './statements/statements.css'
 
 type Filter = 'all' | 'review' | 'imported' | 'problems'
 
@@ -50,16 +51,16 @@ export function StatementsPage() {
   }
 
   return (
-    <div className="statements">
-      <header className="statements__header">
-        <div>
-          <p className="muted">Your imports</p>
-          <h1>Statements</h1>
-        </div>
-        <Link to="/statements/upload" className="button">
-          Upload statement
-        </Link>
-      </header>
+    <div className="page">
+      <PageHeader
+        eyebrow="Your imports"
+        title="Statements"
+        actions={
+          <Link to="/statements/upload" className="button">
+            Upload statement
+          </Link>
+        }
+      />
 
       {error && (
         <FormAlert>
@@ -79,55 +80,32 @@ export function StatementsPage() {
       )}
 
       {statements !== null && statements.length === 0 && (
-        <section className="card empty-state">
-          <h2 className="section-title">No statements yet</h2>
-          <p className="muted">
-            Upload a bank statement PDF to see your transactions. We read it, you check it, and only then is anything
-            saved. The PDF itself is never kept.
-          </p>
-          <Link to="/statements/upload" className="button">
-            Upload your first statement
-          </Link>
-        </section>
+        <EmptyState
+          title="No statements yet"
+          action={
+            <Link to="/statements/upload" className="button">
+              Upload your first statement
+            </Link>
+          }
+        >
+          Upload a bank statement PDF to see your transactions. We read it, you check it, and only then is anything
+          saved. The PDF itself is never kept.
+        </EmptyState>
       )}
 
       {statements !== null && statements.length > 0 && (
         <>
-          <section className="card statements__summary" aria-label="Statement totals">
-            <div className="statements__stat">
-              <span>Imported</span>
-              <strong>{stats.imported}</strong>
-            </div>
-            <div className="statements__stat">
-              <span>Saved transactions</span>
-              <strong>{stats.saved}</strong>
-            </div>
-            <div className="statements__stat">
-              <span>Needs review</span>
-              <strong>{stats.review}</strong>
-            </div>
-            <div className="statements__stat">
-              <span>With warnings</span>
-              <strong>{stats.warnings}</strong>
-            </div>
-          </section>
+          <Stats label="Statement totals">
+            <Stat label="Imported" value={stats.imported} />
+            <Stat label="Saved transactions" value={stats.saved} />
+            <Stat label="Needs review" value={stats.review} tone={stats.review > 0 ? "warn" : undefined} />
+            <Stat label="With warnings" value={stats.warnings} />
+          </Stats>
 
           <section className="card">
-            <div className="statements__toolbar">
-              <h2>History</h2>
-              <div className="statements__filters" role="group" aria-label="Filter statements">
-                {FILTERS.map((f) => (
-                  <button
-                    key={f.key}
-                    type="button"
-                    className="filter-chip"
-                    aria-pressed={filter === f.key}
-                    onClick={() => setFilter(f.key)}
-                  >
-                    {f.label}
-                  </button>
-                ))}
-              </div>
+            <div className="card__header">
+              <h2 className="section-title">History</h2>
+              <Chips label="Filter statements" value={filter} onChange={setFilter} options={FILTERS.map((f) => ({ value: f.key, label: f.label }))} />
             </div>
 
             {visible.length === 0 ? (

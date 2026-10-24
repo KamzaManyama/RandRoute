@@ -1,95 +1,79 @@
-import './BudgetPage.css'
+import { useState } from 'react'
+import { currentMonth, money } from '../lib/format'
+import { MonthPicker, PageHeader, ShareBar, Stat, Stats } from '../components/ui'
 
-type BudgetRow = {
-  category: string
-  planned: number
-  spent: number
-  remaining: number
-  status: 'on-track' | 'warning' | 'over'
-}
+type BudgetRow = { category: string; planned: number; spent: number }
 
+// Sample numbers until budgets are connected (Roadmap phase 5).
 const rows: BudgetRow[] = [
-  { category: 'Housing', planned: 18000, spent: 14320, remaining: 3680, status: 'on-track' },
-  { category: 'Groceries', planned: 6000, spent: 8890, remaining: -2890, status: 'over' },
-  { category: 'Transport', planned: 4000, spent: 4510, remaining: -510, status: 'warning' },
-  { category: 'Dining', planned: 2500, spent: 3640, remaining: -1140, status: 'warning' },
-  { category: 'Health', planned: 2000, spent: 2325, remaining: -325, status: 'warning' },
+  { category: 'Rent & bond', planned: 1800000, spent: 1432000 },
+  { category: 'Groceries', planned: 600000, spent: 889000 },
+  { category: 'Transport & fuel', planned: 400000, spent: 451000 },
+  { category: 'Eating out & takeaways', planned: 250000, spent: 164000 },
+  { category: 'Medical & pharmacy', planned: 200000, spent: 32500 },
 ]
 
-function money(value: number) {
-  return new Intl.NumberFormat('en-ZA', { style: 'currency', currency: 'ZAR' }).format(value / 100)
+function status(row: BudgetRow) {
+  const used = row.spent / row.planned
+  if (used > 1) return { label: 'Exceeded', tone: 'status--bad' }
+  if (used >= 0.9) return { label: 'Near limit', tone: 'status--warn' }
+  return { label: 'On track', tone: 'status--good' }
 }
 
+/** Screen 12 — Monthly budget (preview). */
 export function BudgetPage() {
-  const totalPlanned = rows.reduce((sum, row) => sum + row.planned, 0)
-  const totalSpent = rows.reduce((sum, row) => sum + row.spent, 0)
-  const totalRemaining = totalPlanned - totalSpent
+  const [month, setMonth] = useState(currentMonth)
+  const planned = rows.reduce((s, r) => s + r.planned, 0)
+  const spent = rows.reduce((s, r) => s + r.spent, 0)
 
   return (
-    <div className="budget">
-      <header className="budget__header">
-        <div>
-          <p className="muted">Monthly plan</p>
-          <h1>Budget</h1>
-        </div>
-        <button type="button" className="button">
-          Add category limit
-        </button>
-      </header>
+    <div className="page">
+      <PageHeader
+        eyebrow="Monthly plan"
+        title="Budget"
+        actions={
+          <>
+            <MonthPicker month={month} onChange={setMonth} />
+            <button type="button" className="button" disabled>
+              Add category limit
+            </button>
+          </>
+        }
+      />
 
       <p className="preview-banner" role="note">
-        Preview with sample numbers — this page isn't connected to your statements yet.
+        Preview with sample numbers — this page isn&apos;t connected to your statements yet.
       </p>
 
-      <section className="card">
-        <div className="budget__summary">
-          <div className="budget__stat">
-            <span>Planned</span>
-            <strong>{money(totalPlanned)}</strong>
-          </div>
-          <div className="budget__stat">
-            <span>Spent</span>
-            <strong>{money(totalSpent)}</strong>
-          </div>
-          <div className="budget__stat">
-            <span>Remaining</span>
-            <strong>{money(totalRemaining)}</strong>
-          </div>
-          <div className="budget__stat warning">
-            <span>Coverage</span>
-            <strong>Partial</strong>
-          </div>
-        </div>
-      </section>
+      <Stats label="Budget totals">
+        <Stat label="Planned" value={money(planned)} />
+        <Stat label="Spent" value={money(spent)} />
+        <Stat label="Remaining" value={money(planned - spent)} tone={planned - spent < 0 ? 'negative' : undefined} />
+        <Stat label="Coverage" value="Partial" tone="warn" />
+      </Stats>
 
       <section className="card">
-        <div className="budget__toolbar">
-          <h2 className="section-title">Category limits</h2>
-          <div className="budget__month-picker" aria-label="Budget month controls">
-            <button type="button" className="button button--ghost">Previous</button>
-            <strong>October 2026</strong>
-            <button type="button" className="button button--ghost">Next</button>
-          </div>
-        </div>
-
-        <ul className="budget__list">
-          {rows.map((row) => (
-            <li key={row.category}>
-              <div className="budget__item-meta">
-                <strong>{row.category}</strong>
-                <small>{money(row.planned)} planned</small>
-              </div>
-              <div className="budget__item-values">
-                <span>{money(row.spent)} spent</span>
-                <strong className={row.status === 'over' || row.status === 'warning' ? 'negative' : 'positive'}>
-                  {money(row.remaining)} left
-                </strong>
-              </div>
-              <span className={`budget__tag budget__tag--${row.status}`}>
-                {row.status === 'on-track' ? 'On track' : row.status === 'warning' ? 'Near limit' : 'Exceeded'}
-              </span>
-            </li>
-          ))}
+        <h2 className="section-title">Category limits</h2>
+        <ul className="list">
+          {rows.map((row) => {
+            const s = status(row)
+            const remaining = row.planned - row.spent
+            return (
+              <li key={row.category} className="list-row">
+                <span className="list-row__main">
+                  <span className="list-row__title">{row.category}</span>
+                  <ShareBar share={row.spent / row.planned} label={`${Math.round((row.spent / row.planned) * 100)}% of limit used`} />
+                  <span className="list-row__meta">
+                    {money(row.spent)} of {money(row.planned)} · <span className={`status-badge ${s.tone}`}>{s.label}</span>
+                  </span>
+                </span>
+                <span className={`list-row__value ${remaining < 0 ? 'negative' : ''}`}>
+                  {money(remaining)}
+                  <small>{remaining < 0 ? 'over' : 'left'}</small>
+                </span>
+              </li>
+            )
+          })}
         </ul>
       </section>
     </div>

@@ -1,3 +1,96 @@
+/* ---- Statement history cards ---- */
+.statements__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.statement-item {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
+}
+
+.statement-item__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.statement-item__source {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.statement-item__bank {
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.statement-item__source small,
+.statement-item__details small,
+.statement-item__metrics span {
+  color: var(--color-muted);
+}
+
+.statement-item__details {
+  display: grid;
+  text-align: right;
+  gap: var(--space-1);
+}
+
+.statement-item__metrics {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.statement-item__warnings {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: var(--space-2);
+  color: var(--color-warning-ink);
+}
+
+.statement-item__warnings li {
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--color-warning-bg);
+}
+
+.statement-item--link {
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.statement-item--link:hover {
+  border-color: var(--color-ink);
+  background: var(--color-surface);
+}
+
+@media (max-width: 720px) {
+  .statement-item__meta,
+  .statement-item__metrics {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .statement-item__details {
+    text-align: left;
+  }
+}
+
 /* ---- Upload ---- */
 .upload-form {
   display: grid;
@@ -27,10 +120,6 @@
 
 .dropzone--error {
   border-color: var(--color-negative);
-}
-
-select.field__input {
-  appearance: auto;
 }
 
 .upload-form__period {
@@ -140,12 +229,6 @@ select.field__input {
   align-items: end;
   gap: var(--space-3);
   width: 100%;
-}
-
-.review__summary {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(130px, 1fr));
-  gap: var(--space-3);
 }
 
 .review__rows {
@@ -291,9 +374,6 @@ select.field__input {
 }
 
 @media (max-width: 720px) {
-  .review__summary {
-    grid-template-columns: 1fr 1fr;
-  }
 
   .review-row__controls,
   .row-editor,

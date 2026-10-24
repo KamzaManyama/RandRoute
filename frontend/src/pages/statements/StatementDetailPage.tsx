@@ -13,6 +13,7 @@ import {
 import { ApiError } from '../../lib/api'
 import { formatDate, formatPeriod, money, parseRandInput, signedMoney } from '../../lib/format'
 import { FormAlert, TextField } from '../../components/forms'
+import { Chips, PageHeader, Stat, Stats } from '../../components/ui'
 import { STATUS_INFO } from './statementStatus'
 import './statements.css'
 
@@ -70,7 +71,7 @@ export function StatementDetailPage() {
         <FormAlert>
           <span>{loadError}</span>
           <span>
-            <Link to="/statements" className="auth__link">
+            <Link to="/statements" className="text-link">
               Back to statements
             </Link>
           </span>
@@ -104,22 +105,16 @@ export function StatementDetailPage() {
 
   return (
     <div className="page review">
-      <header className="page-header">
-        <div>
-          <p className="muted">
-            <Link to="/statements" className="auth__link">
-              Statements
-            </Link>{' '}
-            / {statement.bankName}
-          </p>
-          <h1>
-            {statement.bankName}
-            {statement.nickname ? ` · ${statement.nickname}` : ''}
-          </h1>
-          <p className="muted">{formatPeriod(statement.periodStart, statement.periodEnd)}</p>
-        </div>
-        <span className={`status-badge ${status.tone}`}>{status.label}</span>
-      </header>
+      <PageHeader
+        eyebrow={
+          <>
+            <Link to="/statements">Statements</Link> / {statement.bankName}
+          </>
+        }
+        title={`${statement.bankName}${statement.nickname ? ` · ${statement.nickname}` : ""}`}
+        description={formatPeriod(statement.periodStart, statement.periodEnd)}
+        actions={<span className={`status-badge ${status.tone}`}>{status.label}</span>}
+      />
 
       {navState?.justUploaded && detail.reviewing && (
         <FormAlert tone="success">
@@ -344,42 +339,27 @@ function ReviewSection(props: ReviewProps) {
     <>
       <PeriodEditor detail={detail} onSaved={props.reload} />
 
-      <section className="card review__summary" aria-label="Import summary">
-        <div className="statements__stat">
-          <span>Will be imported</span>
-          <strong>{included.length}</strong>
-        </div>
-        <div className="statements__stat">
-          <span>Need a check</span>
-          <strong>{attention.length}</strong>
-        </div>
-        <div className="statements__stat">
-          <span>Money in</span>
-          <strong className="positive">{money(moneyIn)}</strong>
-        </div>
-        <div className="statements__stat">
-          <span>Money out</span>
-          <strong className="negative">{money(moneyOut)}</strong>
-        </div>
-      </section>
+      <Stats label="Import summary">
+        <Stat label="Will be imported" value={included.length} />
+        <Stat label="Need a check" value={attention.length} tone={attention.length > 0 ? "warn" : undefined} />
+        <Stat label="Money in" value={money(moneyIn)} tone="positive" />
+        <Stat label="Money out" value={money(moneyOut)} />
+      </Stats>
 
       <section className="card">
-        <div className="statements__toolbar">
-          <h2>Transactions</h2>
-          <div className="statements__filters" role="group" aria-label="Show transactions">
-            {(
-              [
-                ['attention', `Needs a check (${attention.length})`],
-                ['duplicates', `Possible duplicates (${duplicates.length})`],
-                ['all', `All (${rows.length})`],
-                ['excluded', `Excluded (${excluded.length})`],
-              ] as [Tab, string][]
-            ).map(([key, label]) => (
-              <button key={key} type="button" className="filter-chip" aria-pressed={tab === key} onClick={() => props.setTab(key)}>
-                {label}
-              </button>
-            ))}
-          </div>
+        <div className="card__header">
+          <h2 className="section-title">Transactions</h2>
+          <Chips
+            label="Show transactions"
+            value={tab}
+            onChange={props.setTab}
+            options={[
+              { value: "attention", label: `Needs a check (${attention.length})` },
+              { value: "duplicates", label: `Possible duplicates (${duplicates.length})` },
+              { value: "all", label: `All (${rows.length})` },
+              { value: "excluded", label: `Excluded (${excluded.length})` },
+            ]}
+          />
         </div>
 
         {shown.length === 0 ? (
@@ -612,7 +592,7 @@ function RowEditor({
       <TextField label="Amount (R)" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} error={errors.amount} />
       <div className="field">
         <span className="field__label">Direction</span>
-        <div className="statements__filters" role="group" aria-label="Money in or out">
+        <div className="chips" role="group" aria-label="Money in or out">
           <button type="button" className="filter-chip" aria-pressed={direction === 'outflow'} onClick={() => setDirection('outflow')}>
             Money out
           </button>
@@ -698,8 +678,8 @@ function SavedSection({ rows, categoryName }: { rows: SavedRow[]; categoryName: 
   const moneyOut = rows.filter((r) => r.direction === 'outflow').reduce((s, r) => s + r.amountMinor, 0)
   return (
     <section className="card">
-      <div className="statements__toolbar">
-        <h2>Saved transactions ({rows.length})</h2>
+      <div className="card__header">
+        <h2 className="section-title">Saved transactions ({rows.length})</h2>
         <p className="muted">
           In <strong className="positive">{money(moneyIn)}</strong> · Out <strong className="negative">{money(moneyOut)}</strong>
         </p>
