@@ -2,49 +2,66 @@
 
 **Personal finance clarity for South Africans.**
 
-Accumen is a personal-finance web application that helps individuals understand their money by importing bank statement PDFs, reviewing categorised transactions, tracking spending, planning monthly budgets, and optionally getting AI-assisted explanations of their financial activity.
+RandRoute is a personal-finance web application that helps individuals understand their money by importing bank statement PDFs, reviewing categorised transactions, tracking spending, planning monthly budgets, and optionally getting AI-assisted explanations of their financial activity.
 
-> **Project status:** Planning / specification stage. This repository defines the intended product and technical guardrails. Features are not considered implemented until built and tested.
+> **Project status:** Planning / specification stage. This document defines the intended product and technical guardrails. Features are not considered implemented until built and tested.
 
 ## Contents
 
-- [Product vision](#product-vision)
-- [Problem and approach](#problem-and-approach)
-- [Target users](#target-users)
-- [MVP scope](#mvp-scope)
-- [Primary navigation](#primary-navigation)
-- [Core user journey](#core-user-journey)
-- [Technical direction](#technical-direction)
-- [Privacy and security principles](#privacy-and-security-principles)
-- [Financial calculation rules](#financial-calculation-rules)
-- [Repository structure](#repository-structure)
-- [Development setup](#development-setup)
-- [Quality and acceptance criteria](#quality-and-acceptance-criteria)
-- [Roadmap](#roadmap)
-- [Documentation](#documentation)
+1. [Product vision](#product-vision)
+2. [Product principles](#product-principles)
+3. [Problem and approach](#problem-and-approach)
+4. [Target users](#target-users)
+5. [MVP scope](#mvp-scope)
+6. [Primary navigation](#primary-navigation)
+7. [Core user journey](#core-user-journey)
+8. [Success criteria](#success-criteria)
+9. [Technical direction](#technical-direction)
+10. [Screen specifications](#screen-specifications)
+11. [Data model](#data-model)
+12. [Privacy and security](#privacy-and-security)
+13. [Financial calculation rules](#financial-calculation-rules)
+14. [Repository structure](#repository-structure)
+15. [Development setup](#development-setup)
+16. [Quality and acceptance criteria](#quality-and-acceptance-criteria)
+17. [Roadmap](#roadmap)
+18. [Contribution and decision rule](#contribution-and-decision-rule)
+
+---
 
 ## Product vision
 
 Give people a clear, trustworthy picture of their personal finances without requiring direct access to their bank accounts or making AI responsible for financial calculations.
 
-Accumen is a statement-analysis and budgeting tool. It is **not** a bank, payment service, credit provider, investment adviser, or live banking application.
+RandRoute is a statement-analysis and budgeting tool. It is **not** a bank, payment service, credit provider, investment adviser, or live banking application.
+
+## Product principles
+
+1. Accuracy before automation.
+2. User control over ambiguous transactions and duplicates.
+3. Privacy by design.
+4. Calculations remain deterministic and testable.
+5. AI is optional, consent-based, and invoked only by explicit user action.
+6. Incomplete data is disclosed rather than hidden.
+7. Mobile web usability is a first-release requirement.
 
 ## Problem and approach
 
-People may have financial information spread across statements, accounts, and months. Accumen aims to bring imported transactions into one searchable view and explain the results in plain language.
+People may have financial information spread across statements, accounts, and months. RandRoute brings imported transactions into one searchable view and explains the results in plain language.
 
 1. A user uploads a supported South African bank statement PDF.
-2. Accumen extracts and normalises transaction rows.
+2. RandRoute extracts and normalises transaction rows.
 3. The user reviews uncertain classifications and possible duplicates.
 4. The user confirms which eligible transactions to import.
-5. Accumen calculates spending, cash flow, category totals, and budget progress.
+5. RandRoute calculates spending, cash flow, category totals, and budget progress.
 6. The user can explicitly request an AI explanation of a selected trend or summary.
 
-Accumen must clearly label incomplete statement coverage. It must never imply that imported statement data is a live bank balance.
+RandRoute must clearly label incomplete statement coverage. It must never imply that imported statement data is a live bank balance.
 
 ## Target users
 
 Individuals in South Africa who want to:
+
 - understand where their money goes;
 - combine transaction history from more than one source;
 - search past transactions;
@@ -54,7 +71,8 @@ Individuals in South Africa who want to:
 
 ## MVP scope
 
-### Included
+### Included in v1
+
 - Email/password authentication, email verification, and account recovery.
 - Manual PDF statement upload; no direct bank connections in v1.
 - Support for multiple South African bank statement formats, with each advertised format tested before being marked supported.
@@ -68,8 +86,9 @@ Individuals in South Africa who want to:
 - Responsive desktop and mobile web experience.
 
 ### Not included in v1
+
 - Direct bank integrations, open-banking connections, or live balances.
-- Payments, money transfers, lending, investments, or credit scoring.
+- Payments, money transfers, lending, investments, credit scoring, or investment advice.
 - AI-generated arithmetic as a source of truth.
 - Silent deletion of transactions because they appear duplicated.
 - Retention of original statement PDFs or raw extracted statement text as application records.
@@ -77,13 +96,16 @@ Individuals in South Africa who want to:
 ## Primary navigation
 
 Five primary destinations:
+
 1. **Home** — current-month overview and recent activity.
 2. **Statements** — import sources, statement history, status, and warnings.
 3. **Spending** — category summaries and searchable transaction history.
 4. **Budget** — monthly category limits and planning.
 5. **Insights** — trends and optional AI-assisted explanations.
 
-Profile and privacy settings are accessible separately. Desktop uses a left sidebar; mobile uses bottom navigation. Navigation should preserve the selected month and relevant filters when returning to a previous screen.
+Profile and privacy settings are accessible separately. All screen sizes use a **left side navigation** (no bottom navigation): a persistent sidebar on desktop, collapsing to a slide-out side drawer opened from a menu button on mobile. Navigation should preserve the selected month and relevant filters when returning to a previous screen.
+
+The visual style follows [`design.jpg`](design.jpg): a soft light-grey background, rounded white cards, black primary buttons and highlight cards, compact line charts, and generous spacing.
 
 ## Core user journey
 
@@ -97,13 +119,41 @@ Profile and privacy settings are accessible separately. Desktop uses a left side
 8. Open Insights and explicitly request an AI explanation if wanted.
 9. Export or delete saved data through Profile and privacy settings.
 
+## Success criteria
+
+- Users can import a supported statement without partial writes on failure.
+- Imported transaction values and direction are validated.
+- Users can correct classifications.
+- Figures reconcile with documented rules.
+- Partial coverage is obvious.
+- Users can search historical records.
+- AI is never called just by opening Insights.
+- Sensitive source documents and unnecessary identifiers are not retained as application records.
+
+---
+
 ## Technical direction
 
-The initial frontend direction is **React + Vite + TypeScript**, deployed on Vercel. Supabase is a candidate for authentication and persistent structured data. Gemini may be used for optional AI explanations.
+- **Frontend (`frontend/`):** React + Vite + TypeScript. It only calls the RandRoute backend API. It holds **no** Supabase keys and **no** Gemini key.
+- **Backend (`backend/`):** Node.js + Express + TypeScript. It owns all calls to Supabase (auth and database) and Gemini.
+- **Database and auth:** Supabase (Postgres + Supabase Auth). The SQL lives in [`supabase/migrations/`](supabase/migrations/).
+- **AI:** Gemini, called only from the backend, only after an explicit user action.
 
-These are planned choices, not claims that infrastructure has already been configured. Confirm current provider limits, pricing, data-processing terms, and security controls before production use.
+```text
+Browser (frontend) ──HTTPS + Bearer token──► Backend API ──► Supabase (Auth + Postgres with RLS)
+                                                         └──► Gemini (optional, server-side only)
+```
+
+How the backend talks to Supabase:
+
+- **Auth:** register, sign-in, refresh, and password recovery go through backend endpoints that call Supabase Auth. The frontend stores the returned session and sends `Authorization: Bearer <access token>` on each request.
+- **User data:** for each request the backend builds a Supabase client with the user's access token, so Postgres row-level security applies to every query.
+- **Admin-only tasks** (for example account deletion) use the service-role key, which exists only in backend environment variables.
+
+Confirm current provider limits, pricing, data-processing terms, and security controls before production use.
 
 ### Architectural principles
+
 - The application computes all exact financial figures.
 - AI receives only the minimum de-identified summary needed for the user's explicit request.
 - AI is invoked from a trusted server-side endpoint; secrets never appear in browser code.
@@ -113,143 +163,29 @@ These are planned choices, not claims that infrastructure has already been confi
 - Imports are staged and validated before they change saved financial records.
 - Processing must clean up temporary data on success, failure, and cancellation.
 
-## Privacy and security principles
+---
 
-Bank statements are highly sensitive. Privacy is a core product requirement, not a later enhancement.
+## Screen specifications
 
-- Do not retain original statement PDFs or raw extracted statement text as application records.
-- Do not save unnecessary identifiers such as full account numbers, identity numbers, addresses, or statement-holder names.
-- Store only the cleaned transaction fields needed to provide the product.
-- Minimise transaction descriptions and exclude unnecessary identifiers before any AI request.
-- Do not put statement contents, credentials, financial details, or secrets in application logs, analytics, or error reports.
-- Never expose the Gemini API key or service-role credentials in frontend code.
-- Use least-privilege access, RLS, and server-side authorisation.
-- Explain AI use and obtain user consent before sending relevant data to an AI provider.
-- If privacy or provider terms cannot be verified as acceptable, disable AI until they can.
-- Provide clear controls to export records and delete an import, all financial records, or an account.
-- Disclose any applicable infrastructure backup or retention period; do not promise immediate physical erasure where the provider cannot guarantee it.
-
-See [`docs/PRIVACY_AND_SECURITY.md`](docs/PRIVACY_AND_SECURITY.md).
-
-## Financial calculation rules
-
-- **Income:** count confirmed income credits; not every incoming credit is income.
-- **Spending:** include qualifying expenses while avoiding double-counting.
-- **Transfers:** identify own-account transfers where possible and exclude them from income and spending totals.
-- **Refunds:** link to the original expense when possible or classify separately to avoid inflating income.
-- **Net cash flow:** money in minus money out according to documented classifications.
-- **Budget remaining:** category limit minus qualifying spending for the selected period.
-- **Duplicates:** flag likely matches for user review; never silently discard based only on date and amount.
-- **Partial coverage:** show available figures with prominent partial/incomplete labels.
-- **Recalculation:** category edits, transaction edits, exclusions, and deletions must update affected summaries and budgets.
-
-See [`docs/FINANCIAL_RULES.md`](docs/FINANCIAL_RULES.md).
-
-## Repository structure
-
-```text
-accumen/
-├── README.md
-├── docs/
-│   ├── PRODUCT_SPEC.md
-│   ├── SCREEN_SPECIFICATIONS.md
-│   ├── DATA_MODEL.md
-│   ├── PRIVACY_AND_SECURITY.md
-│   ├── FINANCIAL_RULES.md
-│   └── ROADMAP.md
-├── public/
-├── src/
-├── .env.example
-├── .gitignore
-└── package.json
-```
-
-The `src/` and `public/` directories are placeholders until application development begins. Do not add secrets or real bank statements to this repository.
-
-## Development setup
-
-The repository is currently a specification starter. Once the React/Vite application has been scaffolded:
-
-```bash
-npm install
-npm run dev
-```
-
-Use the scripts defined in `package.json`. Never commit `.env`, API keys, service-role keys, real bank statements, or personal financial data.
-
-Create a local environment file from the template when one exists:
-
-```bash
-copy .env.example .env
-```
-
-The `copy` command is for Windows Command Prompt. In PowerShell, `Copy-Item .env.example .env` is equivalent.
-
-## Quality and acceptance criteria
-
-- [ ] Registration, sign-in, verification, and account recovery work.
-- [ ] Each advertised bank PDF format is tested using representative fixtures.
-- [ ] Extracted dates, amounts, debit/credit direction, and statement totals are validated where possible.
-- [ ] Uncertain categories are flagged without forcing the user to review every reliable row.
-- [ ] Duplicate candidates are presented before import confirmation.
-- [ ] A failed or cancelled import does not leave partial saved transactions.
-- [ ] Dashboard figures reconcile with the included transactions and documented rules.
-- [ ] Partial statement coverage is clearly labelled.
-- [ ] Users can search and filter all saved transactions by date, month, category, and source.
-- [ ] Transaction edits recalculate affected summaries and budgets.
-- [ ] Opening Insights does not call Gemini; AI runs only after an explicit user action.
-- [ ] The application works when AI is unavailable or quota is exhausted.
-- [ ] Original PDFs and raw extraction text are not retained as application records.
-- [ ] User-owned records are protected by server-side authorisation and RLS.
-- [ ] Export and deletion flows are tested and clearly explained.
-- [ ] No secrets or sensitive financial data are exposed in logs or client bundles.
-- [ ] Mobile layouts, loading states, empty states, and error states are tested.
-
-## Roadmap
-
-1. **Specification** — finalise product scope, screens, data model, financial rules, and privacy requirements.
-2. **Foundation** — create the React/Vite/TypeScript app, design system, routing, authentication, and protected data access.
-3. **Statement pipeline** — upload, extraction, normalisation, validation, review, duplicate decisions, and atomic import.
-4. **Core finance UI** — Home, Statements, Spending, transaction details, and search/filtering.
-5. **Budgets and insights** — budgets, trends, and transparent coverage indicators.
-6. **Optional AI** — consent, minimal server-side context, explanation UI, quotas, and graceful failure.
-7. **Hardening** — representative statement testing, security review, deletion/export verification, accessibility, and responsive QA.
-
-## Documentation
-
-- [Product specification](docs/PRODUCT_SPEC.md)
-- [Detailed screen specifications](docs/SCREEN_SPECIFICATIONS.md)
-- [Data model](docs/DATA_MODEL.md)
-- [Privacy and security](docs/PRIVACY_AND_SECURITY.md)
-- [Financial rules](docs/FINANCIAL_RULES.md)
-- [Roadmap](docs/ROADMAP.md)
-
-## Contribution and decision rule
-
-Keep product behaviour consistent with this README and the detailed documents. If implementation constraints require a change to a privacy rule, calculation rule, or import behaviour, document and review the change before shipping it.
-
-**Guiding principle:** Accumen should be transparent about what it knows, what it has inferred, and what data is missing.
-"""
-screens = r"""# Accumen — Detailed Screen Specifications
-
-**Status:** Planning specification  
-**Platform:** Responsive web application  
-**Currency and locale:** South African rand (ZAR / R) by default  
+**Platform:** Responsive web application
+**Currency and locale:** South African rand (ZAR / R) by default
 **Primary user:** Individual managing personal finances
 
-This document defines expected behaviour for the 16 primary screen groups. These specifications describe intended behaviour; they do not mean the screens have already been implemented.
+This section defines expected behaviour for the 16 primary screen groups. These specifications describe intended behaviour; they do not mean the screens have already been implemented.
 
-## Global experience requirements
+### Global experience requirements
 
-### Layout and navigation
+#### Layout and navigation
+
 - Desktop: persistent left sidebar with Home, Statements, Spending, Budget, and Insights.
-- Mobile: bottom navigation with the same five destinations.
+- Mobile: the same left side navigation as a slide-out drawer opened from a menu button. No bottom navigation.
 - Profile and privacy settings are reachable from the account/profile control.
 - Preserve selected month, source, category, and search filters when returning from a detail screen where practical.
 - Use consistent page titles, back actions, loading indicators, confirmations, and error messages.
 - Every screen must have responsive layouts and accessible keyboard focus, labels, contrast, and semantic controls.
 
-### Shared data presentation
+#### Shared data presentation
+
 - Display currency in ZAR using a consistent format, e.g. `R 1,250.00`.
 - Show the selected period and relevant source filters near financial summaries.
 - Distinguish money in, money out, transfers, refunds, and unknown/unclassified activity.
@@ -258,21 +194,20 @@ This document defines expected behaviour for the 16 primary screen groups. These
 - Never present a chart without a clear period, measure, and usable empty state.
 - Provide loading, empty, error, and partial-data states for data-dependent views.
 
-### Import safety
+#### Import safety
+
 - An import is staged until the user confirms it.
 - Failed or cancelled processing must not leave partially imported transactions.
 - Uncertain categories and duplicate candidates must be visible before confirmation.
 - Original PDFs and raw extracted text are temporary processing inputs only and must not be retained as application records.
 - Do not log document contents, account identifiers, or transaction-level sensitive data.
 
----
+### Screen 01 — Welcome
 
-## Screen 01 — Welcome
-
-**Purpose:** Explain Accumen and help a new visitor begin safely.
+**Purpose:** Explain RandRoute and help a new visitor begin safely.
 
 **Content**
-- Accumen name and short value proposition.
+- RandRoute name and short value proposition.
 - Brief explanation: import statements, review transactions, understand spending, and plan budgets.
 - Primary actions: **Create account** and **Sign in**.
 - Short privacy summary: no direct bank connection in v1; uploaded documents are processed without being retained as application records.
@@ -291,7 +226,7 @@ This document defines expected behaviour for the 16 primary screen groups. These
 - Visitors can distinguish statement analysis from live banking.
 - Privacy wording is clear and does not promise more than the implementation can guarantee.
 
-## Screen 02 — Create account / Sign in
+### Screen 02 — Create account / Sign in
 
 **Purpose:** Authenticate the user without collecting banking credentials or unnecessary identity data.
 
@@ -314,7 +249,7 @@ This document defines expected behaviour for the 16 primary screen groups. These
 **States**
 - Empty form, invalid input, submitting, verification required, success, incorrect credentials, rate limited, offline/provider failure.
 
-## Screen 03 — Initial setup
+### Screen 03 — Initial setup
 
 **Purpose:** Set optional preferences before the user starts importing data.
 
@@ -337,7 +272,7 @@ This document defines expected behaviour for the 16 primary screen groups. These
 **States**
 - First setup, saving, saved, recoverable save failure.
 
-## Screen 04 — Home dashboard
+### Screen 04 — Home dashboard
 
 **Purpose:** Provide a quick, accurate overview of imported financial activity.
 
@@ -359,20 +294,15 @@ This document defines expected behaviour for the 16 primary screen groups. These
 - Open Insights without triggering an AI request.
 
 **Rules**
-- Net cash flow follows the classifications in `FINANCIAL_RULES.md`.
+- Net cash flow follows the [financial calculation rules](#financial-calculation-rules).
 - Transfers must not inflate income or spending.
 - Totals based on partial coverage must be labelled.
 - Never call imported totals a current bank balance.
 
 **States**
-- New user/no imports.
-- Loading.
-- Populated.
-- Partial coverage.
-- Data retrieval error with retry.
-- No transactions in selected month.
+- New user/no imports, loading, populated, partial coverage, data retrieval error with retry, no transactions in selected month.
 
-## Screen 05 — Statements overview
+### Screen 05 — Statements overview
 
 **Purpose:** Show imported statement records and their processing/import status.
 
@@ -398,7 +328,7 @@ This document defines expected behaviour for the 16 primary screen groups. These
 **States**
 - No statements, processing, needs review, imported, partial/validation warning, failed, deleted.
 
-## Screen 06 — Upload statement
+### Screen 06 — Upload statement
 
 **Purpose:** Select a statement and establish its source and reporting period.
 
@@ -423,7 +353,7 @@ This document defines expected behaviour for the 16 primary screen groups. These
 **States**
 - Empty, file selected, detecting format, unsupported bank, invalid PDF, file too large, encrypted PDF, uncertain period, upload/processing start failure.
 
-## Screen 07 — Processing and validation
+### Screen 07 — Processing and validation
 
 **Purpose:** Extract transaction candidates and communicate processing progress and confidence.
 
@@ -457,7 +387,7 @@ This document defines expected behaviour for the 16 primary screen groups. These
 **States**
 - Processing, OCR in progress, ready for review, partially parsed, unsupported format, validation warning, cancelled, failed.
 
-## Screen 08 — Transaction review
+### Screen 08 — Transaction review
 
 **Purpose:** Let the user correct uncertain extracted data and classifications before import.
 
@@ -482,13 +412,13 @@ This document defines expected behaviour for the 16 primary screen groups. These
 - Reliable rows should not require needless manual approval one by one.
 - Uncertain rows must be visually flagged.
 - Editing an amount or date must re-run relevant validation.
-- Users may inspect the original PDF on their own device; Accumen must not retain a server-side copy to display it.
+- Users may inspect the original PDF on their own device; RandRoute must not retain a server-side copy to display it.
 - Explain the effect of excluding a row on imported totals.
 
 **States**
 - Review required, all rows reliable, edited, validation warning, no usable transactions, recoverable processing error.
 
-## Screen 09 — Duplicate review and import confirmation
+### Screen 09 — Duplicate review and import confirmation
 
 **Purpose:** Resolve likely duplicates and make the import atomic and explicit.
 
@@ -499,6 +429,12 @@ This document defines expected behaviour for the 16 primary screen groups. These
 - User choices: exclude as duplicate, keep both, or return to review.
 - Import summary: rows to save, rows explicitly excluded, unresolved items, statement period/source, and validation/balance discrepancies.
 
+**Interactions**
+- Resolve each duplicate candidate.
+- Return to Screen 08.
+- Cancel without changing saved records.
+- Confirm import and return to Screen 05 or Screen 04 with a clear success summary.
+
 **Rules**
 - Date and amount alone are not proof of duplication.
 - Never silently exclude a transaction.
@@ -506,16 +442,10 @@ This document defines expected behaviour for the 16 primary screen groups. These
 - Confirmation is the commit point: saved records change only after successful confirmation.
 - If commit fails, do not leave a partial import.
 
-**Interactions**
-- Resolve each duplicate candidate.
-- Return to Screen 08.
-- Cancel without changing saved records.
-- Confirm import and return to Screen 05 or Screen 04 with a clear success summary.
-
 **States**
 - No duplicate candidates, candidates awaiting review, ready to confirm, importing, success, commit failure.
 
-## Screen 10 — Spending overview
+### Screen 10 — Spending overview
 
 **Purpose:** Explore spending by category and search the full saved transaction history.
 
@@ -544,7 +474,7 @@ This document defines expected behaviour for the 16 primary screen groups. These
 **States**
 - Empty, populated, filtered, no matches, partial coverage, loading, retrieval error.
 
-## Screen 11 — Transaction details
+### Screen 11 — Transaction details
 
 **Purpose:** Inspect and correct one saved transaction.
 
@@ -568,7 +498,7 @@ This document defines expected behaviour for the 16 primary screen groups. These
 **States**
 - Viewing, editing, saved, validation error, save failure, deletion confirmation, deleted.
 
-## Screen 12 — Monthly budget
+### Screen 12 — Monthly budget
 
 **Purpose:** Compare planned category limits with qualifying spending.
 
@@ -589,14 +519,14 @@ This document defines expected behaviour for the 16 primary screen groups. These
 
 **Rules**
 - Remaining = limit minus qualifying spending.
-- Spending classification follows `FINANCIAL_RULES.md`.
+- Spending classification follows the [financial calculation rules](#financial-calculation-rules).
 - Negative remaining values must be allowed and clearly shown when a limit is exceeded.
 - Missing imports must not be represented as zero spending without a coverage warning.
 
 **States**
 - No budget, editing, saved, on track, limit reached, exceeded, partial coverage, save failure.
 
-## Screen 13 — Budget planning
+### Screen 13 — Budget planning
 
 **Purpose:** Help users create or adjust a realistic monthly plan.
 
@@ -622,7 +552,7 @@ This document defines expected behaviour for the 16 primary screen groups. These
 **States**
 - New plan, editing, preview, saved, invalid values, plan exceeds income, optional AI unavailable, save failure.
 
-## Screen 14 — Monthly insights
+### Screen 14 — Monthly insights
 
 **Purpose:** Explain trends using available, traceable data.
 
@@ -645,22 +575,22 @@ This document defines expected behaviour for the 16 primary screen groups. These
 **Rules**
 - Opening the screen must not call Gemini.
 - AI runs only after a clear user action and applicable consent.
-- All displayed figures are calculated by Accumen.
+- All displayed figures are calculated by RandRoute.
 - Do not state that a trend is unusual without sufficient comparable data.
 - Label partial periods and incomplete statement coverage.
 
 **States**
 - No history, insufficient comparison data, populated, partial coverage, AI not requested, AI unavailable/quota exhausted, analysis failure.
 
-## Screen 15 — Ask Accumen
+### Screen 15 — Ask RandRoute
 
 **Purpose:** Answer user questions about their imported financial records in plain language.
 
 **Example questions**
-- “Why did my transport spending increase?”
-- “How much did I spend on subscriptions this month?”
-- “What would happen if I reduced takeaway spending?”
-- “Based on the records I imported, how much might I save?”
+- "Why did my transport spending increase?"
+- "How much did I spend on subscriptions this month?"
+- "What would happen if I reduced takeaway spending?"
+- "Based on the records I imported, how much might I save?"
 
 **Content**
 - Question field.
@@ -673,7 +603,7 @@ This document defines expected behaviour for the 16 primary screen groups. These
 **Request flow**
 1. User explicitly submits a question.
 2. Server validates authentication, consent, and allowed scope.
-3. Accumen computes the relevant figures.
+3. RandRoute computes the relevant figures.
 4. Only the minimum de-identified summary needed is sent to Gemini.
 5. The answer is shown with caveats and links to the supporting app data where possible.
 
@@ -688,7 +618,7 @@ This document defines expected behaviour for the 16 primary screen groups. These
 **States**
 - Ready, generating, answer available, insufficient data, consent required, AI unavailable, quota exhausted, request failure, cleared conversation.
 
-## Screen 16 — Profile and privacy settings
+### Screen 16 — Profile and privacy settings
 
 **Purpose:** Manage account access, preferences, AI consent, and personal data.
 
@@ -721,9 +651,7 @@ This document defines expected behaviour for the 16 primary screen groups. These
 **States**
 - Default, saving, export preparing/ready/failed, delete confirmation, deletion processing, deletion success, recoverable error.
 
----
-
-## Cross-screen data and consistency rules
+### Cross-screen data and consistency rules
 
 - All totals must be derived from the same canonical transaction classification rules.
 - Every saved transaction must belong to an authenticated user and a known import/source context where applicable.
@@ -733,9 +661,10 @@ This document defines expected behaviour for the 16 primary screen groups. These
 - AI answers must be traceable to computed figures and the data scope used for the answer.
 - Do not expose sensitive values in URLs, analytics events, logs, or client-side error messages.
 
-## Minimum screen QA checklist
+### Minimum screen QA checklist
 
 For each screen, verify:
+
 - [ ] Desktop layout.
 - [ ] Mobile layout.
 - [ ] Keyboard navigation and visible focus.
@@ -746,50 +675,15 @@ For each screen, verify:
 - [ ] Correct navigation and preserved filters.
 - [ ] No sensitive data leakage.
 - [ ] Correct calculations and accessible labels.
-"""
-product = r"""# Accumen — Product Specification
 
-## Summary
-Accumen is a South African personal-finance web app that converts supported bank statement PDFs into user-reviewed transaction records, spending summaries, monthly budgets, and optional AI-assisted explanations.
+---
 
-## Product principles
-1. Accuracy before automation.
-2. User control over ambiguous transactions and duplicates.
-3. Privacy by design.
-4. Calculations remain deterministic and testable.
-5. AI is optional, consent-based, and invoked only by explicit user action.
-6. Incomplete data is disclosed rather than hidden.
-7. Mobile web usability is a first-release requirement.
+## Data model
 
-## Intended audience
-Individuals who want to understand their spending and plan monthly budgets from records they choose to import.
-
-## Version 1
-Manual PDF upload; multiple tested South African bank formats; normalised transaction review; duplicate review; combined source-aware history; dashboard; spending; budgets; insights; optional AI explanations; export and deletion.
-
-## Exclusions
-No direct bank connections, payments, live balances, credit scoring, lending, or investment advice.
-
-## Core journey
-Authenticate → optional setup → upload PDF → validate/extract → review uncertain rows → resolve duplicate candidates → confirm import → inspect summaries → set budget → optionally request an AI explanation.
-
-## Success criteria
-- Users can import a supported statement without partial writes on failure.
-- Imported transaction values and direction are validated.
-- Users can correct classifications.
-- Figures reconcile with documented rules.
-- Partial coverage is obvious.
-- Users can search historical records.
-- AI is never called just by opening Insights.
-- Sensitive source documents and unnecessary identifiers are not retained as application records.
-"""
-data_model = r"""# Accumen — Data Model
-
-This is a logical starting point, not a final database migration. Review it against the chosen extraction workflow and Supabase schema before implementation.
-
-## Entities
+This is the logical model. The exact schema is in [`supabase/migrations/`](supabase/migrations/), which adds three supporting tables: `statement_sources` (bank format + nickname), `staged_transactions` (extracted rows waiting for review, moved into `transactions` by the `confirm_import` function in one step), and `ai_requests` (a rate-limit log that stores no prompts or answers).
 
 ### User preferences
+
 - `user_id` — auth identity; unique.
 - `currency` — defaults to `ZAR`.
 - `setup_completed_at` — nullable.
@@ -797,6 +691,7 @@ This is a logical starting point, not a final database migration. Review it agai
 - Created/updated timestamps as appropriate.
 
 ### Statement import
+
 - `id`
 - `user_id`
 - `source_label` or user-defined nickname
@@ -809,6 +704,7 @@ This is a logical starting point, not a final database migration. Review it agai
 - Avoid storing PDF bytes, raw statement text, full account numbers, or unnecessary holder identifiers.
 
 ### Transaction
+
 - `id`
 - `user_id`
 - `import_id`
@@ -826,10 +722,12 @@ This is a logical starting point, not a final database migration. Review it agai
 - Created/updated timestamps
 
 ### Category
+
 - Stable category ID/key, display name, and whether it is system-provided or user-defined.
 - Define how category changes affect reports and budgets.
 
 ### Monthly budget
+
 - `id`
 - `user_id`
 - `month`
@@ -838,6 +736,7 @@ This is a logical starting point, not a final database migration. Review it agai
 - Created/updated timestamps
 
 ### Budget category limit
+
 - `id`
 - `user_id`
 - `budget_id`
@@ -846,9 +745,11 @@ This is a logical starting point, not a final database migration. Review it agai
 - Created/updated timestamps
 
 ### Optional cached monthly summary
+
 Only introduce caching if needed. Treat transaction records and documented rules as the source of truth. A cached summary must be rebuildable and invalidated when contributing transactions change.
 
-## Security and integrity
+### Data integrity
+
 - Every user-owned table must enforce ownership through row-level security and server-side authorisation.
 - Never trust a client-supplied `user_id` as proof of ownership.
 - Use foreign keys and appropriate uniqueness constraints.
@@ -856,32 +757,41 @@ Only introduce caching if needed. Treat transaction records and documented rules
 - Do not store original PDFs or raw extraction text as persistent application records.
 - Avoid sensitive transaction data in logs and analytics.
 - Deletion must remove related rows and invalidate derived summaries according to the retention policy.
-"""
-privacy = r"""# Accumen — Privacy and Security Requirements
 
-## Data minimisation
+---
+
+## Privacy and security
+
+Bank statements are highly sensitive. Privacy is a core product requirement, not a later enhancement. For vulnerability reporting, see [SECURITY.md](SECURITY.md).
+
+### Data minimisation
+
 - Do not retain original statement PDFs or raw extracted statement text as application records.
 - Save only the cleaned transaction fields necessary for user-facing features.
 - Avoid full account numbers, identity numbers, addresses, card numbers, statement-holder names, and other unnecessary identifiers.
 - Clean transaction descriptions where possible without destroying information required to understand the transaction.
 - Do not put sensitive values in logs, analytics, URLs, error messages, or telemetry.
 
-## Temporary statement processing
+### Temporary statement processing
+
 - Use temporary storage only when necessary.
 - Apply access controls, short-lived processing locations, and size limits.
 - Clean temporary files and extracted text after success, failure, and cancellation.
 - Ensure failed jobs and retry flows do not leave temporary files behind.
 - Do not render an original server-retained PDF in the application.
 
-## Authentication and access control
+### Authentication and access control
+
 - Use a supported authentication provider and safe session handling.
 - Enforce server-side authorisation for every private operation.
 - Apply database row-level security to user-owned records.
 - Never trust a user ID supplied by the browser.
-- Keep service-role credentials and provider API keys on the server only.
+- Keep service-role credentials and provider API keys (including the Gemini key) on the server only.
 
-## Optional AI
+### Optional AI
+
 - AI is off until the user explicitly invokes an AI-assisted action and the required consent is present.
+- Explain AI use and obtain consent before sending relevant data to an AI provider.
 - Opening Insights does not call AI.
 - Compute financial figures in application code.
 - Send only the minimum de-identified summary necessary to answer the user's question.
@@ -890,7 +800,8 @@ privacy = r"""# Accumen — Privacy and Security Requirements
 - If the terms or controls are unsuitable or unclear, disable AI.
 - Handle quotas, timeouts, refusal, and outages without breaking core features.
 
-## Export and deletion
+### Export and deletion
+
 - Provide export of saved user records in a practical format.
 - Support deleting an individual import and its associated transactions.
 - Support deleting all saved financial records.
@@ -898,78 +809,217 @@ privacy = r"""# Accumen — Privacy and Security Requirements
 - Recalculate or invalidate derived summaries after deletion.
 - Explain applicable infrastructure backup retention; do not promise instant deletion from all backups unless verified.
 
-## Incident prevention checklist
-- No secrets in Git.
-- `.env` is ignored.
-- `.env.example` contains names/placeholders only.
-- No real bank statements in repository fixtures.
-- Use synthetic or appropriately anonymised test data.
-- Review database policies before production.
-- Test cross-user access attempts.
-- Review logs and error reporting for data leakage.
-"""
-financial = r"""# Accumen — Financial Calculation Rules
+### Incident prevention checklist
+
+- [ ] No secrets in Git.
+- [ ] `.env` is ignored.
+- [ ] `.env.example` contains names/placeholders only.
+- [ ] No real bank statements in repository fixtures.
+- [ ] Use synthetic or appropriately anonymised test data.
+- [ ] Review database policies before production.
+- [ ] Test cross-user access attempts.
+- [ ] Review logs and error reporting for data leakage.
+
+---
+
+## Financial calculation rules
 
 These rules are product requirements. Implement them in deterministic application code and cover them with tests.
 
-## Monetary precision
+### Monetary precision
+
 - Store amounts as integer minor units (cents) or use an exact decimal representation.
 - Never use binary floating-point values for financial arithmetic.
 - Format amounts for display only at the presentation layer.
 
-## Income
+### Income
+
 - Count only transactions classified as confirmed income.
 - Do not classify every credit as income.
 - Transfers, refunds, reversals, and account adjustments must not automatically count as income.
 
-## Spending
+### Spending
+
 - Count qualifying expenses.
 - Exclude transfers from spending where they are identified as transfers.
 - Avoid double-counting transactions across overlapping imports or duplicate records.
 - Explain how refunds affect spending totals.
 
-## Transfers
+### Transfers
+
 - Identify transfers between a user's own accounts where possible.
 - Do not count an internal transfer as new income or new spending.
 - If uncertain, flag for review instead of making an unqualified assumption.
 
-## Refunds and reversals
+### Refunds and reversals
+
 - Link a refund to its original expense when possible.
 - Otherwise classify it separately with clear reporting semantics.
 - Avoid inflating income with refunds.
 
-## Net cash flow
-`Net cash flow = qualifying money in - qualifying money out`
+### Net cash flow
+
+```text
+Net cash flow = qualifying money in − qualifying money out
+```
 
 The precise qualifying classifications must be shared across dashboard, spending, and insights views.
 
-## Budgets
-`Category remaining = category limit - qualifying category spending`
+### Budgets
+
+```text
+Category remaining = category limit − qualifying category spending
+```
 
 - Remaining can be negative.
 - A limit being exceeded must be explicit.
 - Partial statement coverage must be disclosed so missing transactions are not mistaken for zero spending.
 
-## Period comparisons
+### Period comparisons
+
 - Define month boundaries consistently.
 - Compare equivalent periods.
 - Mark incomplete periods or statement coverage.
 - Do not label a category increase as unusual without enough comparable history.
 
-## Duplicate detection
+### Duplicate detection
+
 - Generate candidates using multiple signals where possible.
 - Date and amount alone are insufficient proof.
 - Present candidates to the user.
 - Never silently delete or exclude a suspected duplicate.
 
-## Partial coverage
+### Partial coverage
+
 - Show figures calculated from available records with a visible partial-data label.
 - Do not hide all totals until coverage is complete.
 - Avoid presenting partial totals as definitive monthly totals.
-"""
-roadmap = r"""# Accumen — Roadmap
 
-## Phase 1: Specification
+### Recalculation
+
+- Category edits, transaction edits, exclusions, and deletions must update affected summaries and budgets.
+
+---
+
+## Repository structure
+
+```text
+RandRoute/
+├── README.md                 # This document — the single source of truth
+├── SECURITY.md               # Security policy and vulnerability reporting
+├── design.jpg                # Visual reference (we use a side nav, not the bottom nav shown)
+├── supabase/
+│   └── migrations/           # SQL to run in Supabase, in filename order
+│       ├── 20261024000001_schema.sql            # tables, types, indexes
+│       ├── 20261024000002_rls.sql               # row-level security policies
+│       ├── 20261024000003_functions.sql         # sign-up trigger, confirm/cancel import, deletion
+│       └── 20261024000004_seed_categories.sql   # shared system categories
+├── backend/                  # Express + TypeScript API (owns Supabase + Gemini)
+│   ├── src/
+│   │   ├── config/env.ts     # validates environment variables at startup
+│   │   ├── lib/              # Supabase and Gemini clients
+│   │   ├── middleware/       # auth check, error handling
+│   │   ├── routes/           # API routes
+│   │   ├── app.ts            # builds the Express app
+│   │   └── server.ts         # starts the server
+│   ├── scripts/verify-migrations.mjs   # tests the SQL in an in-memory Postgres
+│   └── .env.example
+└── frontend/                 # React + Vite + TypeScript (calls the backend only)
+    ├── src/
+    │   ├── components/       # layout with side navigation, icons
+    │   ├── pages/
+    │   ├── lib/api.ts        # the single API client
+    │   └── index.css         # design tokens
+    └── .env.example
+```
+
+Do not add secrets or real bank statements to this repository.
+
+---
+
+## Development setup
+
+### 1. Create the Supabase project
+
+1. Create a project at [supabase.com](https://supabase.com). Pick the region closest to South Africa that's available.
+2. Open **SQL Editor** and run each file in [`supabase/migrations/`](supabase/migrations/) **in filename order** (1 → 4). Each file runs on its own.
+   - Or, with the Supabase CLI: `npx supabase link --project-ref <your-ref>` then `npx supabase db push`.
+3. **Authentication → Sign In / Providers → Email**: keep Email enabled and turn on **Confirm email**.
+4. **Authentication → URL Configuration**:
+   - Site URL: `http://localhost:5173`
+   - Redirect URLs: add `http://localhost:5173/auth/callback`
+5. **Authentication → Policies / Passwords**: set a minimum password length of at least 8.
+6. Optional: enable the `pg_cron` extension and schedule the stale-import cleanup (see the bottom of the functions migration).
+
+### 2. Configure and run the backend
+
+```powershell
+cd backend
+Copy-Item .env.example .env     # then fill in the values below
+npm install
+npm run dev                     # http://localhost:4000
+```
+
+| Variable | Where to find it |
+| --- | --- |
+| `SUPABASE_URL` | Project Settings → API → Project URL |
+| `SUPABASE_ANON_KEY` | Project Settings → API Keys → `anon` / publishable key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Project Settings → API Keys → `service_role` / secret key. **Server only.** |
+| `GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/apikey). Leave `AI_ENABLED=false` until the provider terms are reviewed. |
+
+Check the setup:
+
+- `http://localhost:4000/api/health` → `{"status":"ok", ...}`
+- `http://localhost:4000/api/health/db` → `{"database":"ok","systemCategories":24}` once the migrations have been run.
+
+### 3. Run the frontend
+
+```powershell
+cd frontend
+npm install
+npm run dev                     # http://localhost:5173
+```
+
+In development, Vite forwards `/api` requests to the backend, so the frontend needs no `.env`. In production, set `VITE_API_BASE_URL` to the backend URL.
+
+### Tests
+
+| Command | What it checks |
+| --- | --- |
+| `cd backend && npm test` | Config validation, health routes, security headers, CORS |
+| `cd backend && npm run test:db` | Applies all migrations to an in-memory Postgres and checks RLS, import confirmation, duplicates, and deletion |
+| `cd frontend && npm test` | Side navigation, mobile drawer, backend status |
+
+Never commit `.env`, API keys, service-role keys, real bank statements, or personal financial data.
+
+---
+
+## Quality and acceptance criteria
+
+- [ ] Registration, sign-in, verification, and account recovery work.
+- [ ] Each advertised bank PDF format is tested using representative fixtures.
+- [ ] Extracted dates, amounts, debit/credit direction, and statement totals are validated where possible.
+- [ ] Uncertain categories are flagged without forcing the user to review every reliable row.
+- [ ] Duplicate candidates are presented before import confirmation.
+- [ ] A failed or cancelled import does not leave partial saved transactions.
+- [ ] Dashboard figures reconcile with the included transactions and documented rules.
+- [ ] Partial statement coverage is clearly labelled.
+- [ ] Users can search and filter all saved transactions by date, month, category, and source.
+- [ ] Transaction edits recalculate affected summaries and budgets.
+- [ ] Opening Insights does not call Gemini; AI runs only after an explicit user action.
+- [ ] The application works when AI is unavailable or quota is exhausted.
+- [ ] Original PDFs and raw extraction text are not retained as application records.
+- [ ] User-owned records are protected by server-side authorisation and RLS.
+- [ ] Export and deletion flows are tested and clearly explained.
+- [ ] No secrets or sensitive financial data are exposed in logs or client bundles.
+- [ ] Mobile layouts, loading states, empty states, and error states are tested.
+
+---
+
+## Roadmap
+
+### Phase 1: Specification
+
 - [ ] Review product scope and exclusions.
 - [ ] Approve all 16 screen specifications.
 - [ ] Confirm financial calculation semantics.
@@ -977,14 +1027,16 @@ roadmap = r"""# Accumen — Roadmap
 - [ ] Review privacy and AI-provider constraints.
 - [ ] Define supported statement formats and test fixtures.
 
-## Phase 2: Application foundation
+### Phase 2: Application foundation
+
 - [ ] Scaffold React + Vite + TypeScript.
 - [ ] Establish design tokens, responsive shell, and routing.
 - [ ] Implement authentication and protected routes.
 - [ ] Configure Supabase only after access-control and schema review.
 - [ ] Add environment templates and secret-handling rules.
 
-## Phase 3: Statement pipeline
+### Phase 3: Statement pipeline
+
 - [ ] Implement PDF validation.
 - [ ] Add one statement format end-to-end and test it.
 - [ ] Add extraction, normalisation, and validation.
@@ -994,50 +1046,42 @@ roadmap = r"""# Accumen — Roadmap
 - [ ] Verify cleanup on success, failure, and cancellation.
 - [ ] Add additional bank formats only after test coverage.
 
-## Phase 4: Core finance experience
+### Phase 4: Core finance experience
+
 - [ ] Home dashboard.
 - [ ] Statements overview.
 - [ ] Spending overview and search.
 - [ ] Transaction details and edits.
 - [ ] Consistent totals and coverage warnings.
 
-## Phase 5: Budgeting and insights
+### Phase 5: Budgeting and insights
+
 - [ ] Monthly budget.
 - [ ] Budget planning.
 - [ ] Monthly trends and comparison logic.
 - [ ] Data sufficiency and partial-period indicators.
 
-## Phase 6: Optional AI
+### Phase 6: Optional AI
+
 - [ ] Verify provider terms and data-processing settings.
 - [ ] Add explicit consent and invocation.
 - [ ] Add server-side summary computation and minimisation.
 - [ ] Add quota/rate-limit/error handling.
 - [ ] Confirm AI outages do not block core features.
 
-## Phase 7: Release readiness
+### Phase 7: Release readiness
+
 - [ ] Cross-user access and RLS tests.
 - [ ] Import atomicity and cleanup tests.
 - [ ] Financial calculation tests.
 - [ ] Export and deletion tests.
 - [ ] Mobile, accessibility, and browser QA.
 - [ ] Review logs, analytics, and client bundle for leaks.
-"""
-gitignore = """node_modules/
-dist/
-.vite/
-.env
-.env.*
-!.env.example
-coverage/
-*.log
-.DS_Store
-Thumbs.db
-"""
-envexample = """# Add only non-secret client configuration here when required.
-# Never put Gemini API keys or Supabase service-role keys in VITE_* variables.
-# VITE_SUPABASE_URL=
-# VITE_SUPABASE_ANON_KEY=
-#
-# Server-only secrets belong in the hosting provider's environment settings.
-# GEMINI_API_KEY=
-# SUPABASE_SERVICE_ROLE_KEY=# RandRoute
+
+---
+
+## Contribution and decision rule
+
+Keep product behaviour consistent with this document. If implementation constraints require a change to a privacy rule, calculation rule, or import behaviour, document and review the change here before shipping it.
+
+**Guiding principle:** RandRoute should be transparent about what it knows, what it has inferred, and what data is missing.
