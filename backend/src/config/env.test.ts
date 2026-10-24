@@ -3,8 +3,8 @@ import { loadConfig } from "./env.js";
 
 const validEnv = {
   SUPABASE_URL: "https://example.supabase.co",
-  SUPABASE_ANON_KEY: "anon-key-0123456789abcdef",
-  SUPABASE_SERVICE_ROLE_KEY: "service-key-0123456789abcdef",
+  SUPABASE_PUBLISHABLE_KEY: "sb_publishable_0123456789abcdef",
+  SUPABASE_SECRET_KEY: "sb_secret_0123456789abcdef",
 };
 
 describe("loadConfig", () => {
@@ -16,7 +16,7 @@ describe("loadConfig", () => {
   });
 
   it("lists every missing Supabase setting", () => {
-    expect(() => loadConfig({})).toThrow(/SUPABASE_URL[\s\S]*SUPABASE_ANON_KEY[\s\S]*SUPABASE_SERVICE_ROLE_KEY/);
+    expect(() => loadConfig({})).toThrow(/SUPABASE_URL[\s\S]*SUPABASE_PUBLISHABLE_KEY[\s\S]*SUPABASE_SECRET_KEY/);
   });
 
   it("refuses to enable AI without a Gemini key", () => {

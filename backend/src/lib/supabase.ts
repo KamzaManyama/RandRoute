@@ -9,22 +9,22 @@ const serverAuthOptions = {
 } as const;
 
 export type SupabaseClients = {
-  /** Fresh anon client for auth calls (sign-up, sign-in, refresh). */
+  /** Fresh publishable-key client for auth calls (sign-up, sign-in, refresh). */
   auth: () => SupabaseClient;
   /** Client that acts as the signed-in user, so row-level security applies. */
   forUser: (accessToken: string) => SupabaseClient;
-  /** Service-role client. Bypasses RLS — admin tasks only (e.g. account deletion). */
+  /** Secret-key client. Bypasses RLS — admin tasks only (e.g. account deletion). */
   admin: SupabaseClient;
 };
 
 export function createSupabaseClients(config: AppConfig["supabase"]): SupabaseClients {
   return {
-    auth: () => createClient(config.url, config.anonKey, { auth: serverAuthOptions }),
+    auth: () => createClient(config.url, config.publishableKey, { auth: serverAuthOptions }),
     forUser: (accessToken) =>
-      createClient(config.url, config.anonKey, {
+      createClient(config.url, config.publishableKey, {
         auth: serverAuthOptions,
         global: { headers: { Authorization: `Bearer ${accessToken}` } },
       }),
-    admin: createClient(config.url, config.serviceRoleKey, { auth: serverAuthOptions }),
+    admin: createClient(config.url, config.secretKey, { auth: serverAuthOptions }),
   };
 }

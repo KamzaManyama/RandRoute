@@ -8,8 +8,8 @@ import type { SupabaseClients } from "./lib/supabase.js";
 const config = loadConfig({
   NODE_ENV: "test",
   SUPABASE_URL: "https://example.supabase.co",
-  SUPABASE_ANON_KEY: "anon-key-0123456789abcdef",
-  SUPABASE_SERVICE_ROLE_KEY: "service-key-0123456789abcdef",
+  SUPABASE_PUBLISHABLE_KEY: "sb_publishable_0123456789abcdef",
+  SUPABASE_SECRET_KEY: "sb_secret_0123456789abcdef",
 });
 
 /** Minimal fake of the Supabase query used by /api/health/db. */

@@ -14,8 +14,9 @@ const envSchema = z.object({
     .transform((value) => value.split(",").map((origin) => origin.trim()).filter(Boolean)),
 
   SUPABASE_URL: z.url({ error: "missing or invalid — use your project URL, e.g. https://xyz.supabase.co" }),
-  SUPABASE_ANON_KEY: z.string({ error: "missing — copy the anon/publishable key from Supabase" }).min(1, { error: "empty — fill it in backend/.env", abort: true }).min(20, "looks too short"),
-  SUPABASE_SERVICE_ROLE_KEY: z.string({ error: "missing — copy the service_role/secret key from Supabase" }).min(1, { error: "empty — fill it in backend/.env", abort: true }).min(20, "looks too short"),
+  SUPABASE_PUBLISHABLE_KEY: z.string({ error: "missing — copy the publishable key (sb_publishable_...) from Supabase" }).min(1, { error: "empty — fill it in backend/.env", abort: true }).min(20, "looks too short"),
+  SUPABASE_SECRET_KEY: z.string({ error: "missing — copy the secret key (sb_secret_...) from Supabase" }).min(1, { error: "empty — fill it in backend/.env", abort: true }).min(20, "looks too short"),
+  SUPABASE_JWKS_URL: z.url().optional(),
   AUTH_REDIRECT_URL: z.url().default("http://localhost:5173/auth/callback"),
 
   AI_ENABLED: booleanString,
@@ -29,8 +30,11 @@ export type AppConfig = {
   frontendOrigins: string[];
   supabase: {
     url: string;
-    anonKey: string;
-    serviceRoleKey: string;
+    /** sb_publishable_... — safe for auth calls and user-scoped (RLS) queries. */
+    publishableKey: string;
+    /** sb_secret_... — bypasses RLS. Server only. */
+    secretKey: string;
+    jwksUrl?: string;
     authRedirectUrl: string;
   };
   ai: {
@@ -61,8 +65,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     frontendOrigins: e.FRONTEND_ORIGIN,
     supabase: {
       url: e.SUPABASE_URL,
-      anonKey: e.SUPABASE_ANON_KEY,
-      serviceRoleKey: e.SUPABASE_SERVICE_ROLE_KEY,
+      publishableKey: e.SUPABASE_PUBLISHABLE_KEY,
+      secretKey: e.SUPABASE_SECRET_KEY,
+      jwksUrl: e.SUPABASE_JWKS_URL,
       authRedirectUrl: e.AUTH_REDIRECT_URL,
     },
     ai: {

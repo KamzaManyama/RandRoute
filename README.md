@@ -963,8 +963,9 @@ npm run dev                     # http://localhost:4000
 | Variable | Where to find it |
 | --- | --- |
 | `SUPABASE_URL` | Project Settings → API → Project URL |
-| `SUPABASE_ANON_KEY` | Project Settings → API Keys → `anon` / publishable key |
-| `SUPABASE_SERVICE_ROLE_KEY` | Project Settings → API Keys → `service_role` / secret key. **Server only.** |
+| `SUPABASE_JWKS_URL` (optional) | `<project URL>/auth/v1/.well-known/jwks.json` |
+| `SUPABASE_PUBLISHABLE_KEY` | Project Settings → API Keys → publishable key (`sb_publishable_...`) |
+| `SUPABASE_SECRET_KEY` | Project Settings → API Keys → secret key (`sb_secret_...`). **Server only.** |
 | `GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/apikey). Leave `AI_ENABLED=false` until the provider terms are reviewed. |
 
 Check the setup:
