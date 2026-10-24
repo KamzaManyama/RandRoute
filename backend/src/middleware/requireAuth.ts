@@ -1,4 +1,4 @@
-import type { RequestHandler } from "express";
+import type { Request, RequestHandler } from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { SupabaseClients } from "../lib/supabase.js";
 import { HttpError } from "./errors.js";
@@ -20,16 +20,20 @@ declare global {
   }
 }
 
+/** Returns the token from an `Authorization: Bearer <token>` header, if any. */
+export function getBearerToken(req: Request): string | null {
+  const match = /^Bearer\s+(.+)$/i.exec(req.get("authorization") ?? "");
+  return match?.[1]?.trim() || null;
+}
+
 /** Rejects the request unless it carries a valid Supabase access token. */
 export function requireAuth(supabase: SupabaseClients): RequestHandler {
   return async (req, _res, next) => {
-    const header = req.get("authorization") ?? "";
-    const match = /^Bearer\s+(.+)$/i.exec(header);
-    if (!match?.[1]) {
+    const accessToken = getBearerToken(req);
+    if (!accessToken) {
       return next(new HttpError(401, "unauthorised", "Please sign in."));
     }
 
-    const accessToken = match[1].trim();
     const { data, error } = await supabase.auth().auth.getUser(accessToken);
     if (error || !data.user) {
       return next(new HttpError(401, "unauthorised", "Your session has expired. Please sign in again."));

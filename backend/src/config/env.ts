@@ -10,14 +10,19 @@ const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   FRONTEND_ORIGIN: z
     .string()
-    .default("http://localhost:5173")
+    .default("http://localhost:4173")
     .transform((value) => value.split(",").map((origin) => origin.trim()).filter(Boolean)),
 
   SUPABASE_URL: z.url({ error: "missing or invalid — use your project URL, e.g. https://xyz.supabase.co" }),
   SUPABASE_PUBLISHABLE_KEY: z.string({ error: "missing — copy the publishable key (sb_publishable_...) from Supabase" }).min(1, { error: "empty — fill it in backend/.env", abort: true }).min(20, "looks too short"),
   SUPABASE_SECRET_KEY: z.string({ error: "missing — copy the secret key (sb_secret_...) from Supabase" }).min(1, { error: "empty — fill it in backend/.env", abort: true }).min(20, "looks too short"),
   SUPABASE_JWKS_URL: z.url().optional(),
-  AUTH_REDIRECT_URL: z.url().default("http://localhost:5173/auth/callback"),
+  AUTH_REDIRECT_URL: z.url().default("http://localhost:4173/auth/callback"),
+
+  // Refresh-token cookie. Defaults: Secure in production; SameSite=Lax (use "none" only
+  // when the frontend and backend are on different sites, which also requires Secure).
+  COOKIE_SECURE: z.enum(["true", "false"]).optional(),
+  COOKIE_SAMESITE: z.enum(["lax", "strict", "none"]).default("lax"),
 
   AI_ENABLED: booleanString,
   GEMINI_API_KEY: z.string().optional().transform((value) => (value ? value : undefined)),
@@ -36,6 +41,10 @@ export type AppConfig = {
     secretKey: string;
     jwksUrl?: string;
     authRedirectUrl: string;
+  };
+  cookies: {
+    secure: boolean;
+    sameSite: "lax" | "strict" | "none";
   };
   ai: {
     enabled: boolean;
@@ -59,6 +68,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new Error("AI_ENABLED=true but GEMINI_API_KEY is empty. Add the key or set AI_ENABLED=false.");
   }
 
+  const cookieSecure = e.COOKIE_SECURE ? e.COOKIE_SECURE === "true" : e.NODE_ENV === "production";
+  if (e.COOKIE_SAMESITE === "none" && !cookieSecure) {
+    throw new Error("COOKIE_SAMESITE=none requires COOKIE_SECURE=true.");
+  }
+
   return {
     port: e.PORT,
     nodeEnv: e.NODE_ENV,
@@ -69,6 +83,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       secretKey: e.SUPABASE_SECRET_KEY,
       jwksUrl: e.SUPABASE_JWKS_URL,
       authRedirectUrl: e.AUTH_REDIRECT_URL,
+    },
+    cookies: {
+      secure: cookieSecure,
+      sameSite: e.COOKIE_SAMESITE,
     },
     ai: {
       enabled: e.AI_ENABLED,

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { useAuth } from '../auth/useAuth'
 import {
   BudgetIcon,
   CloseIcon,
@@ -27,6 +28,8 @@ const NAV_ITEMS = [
 export function AppLayout() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const closeDrawer = () => setDrawerOpen(false)
+  const navigate = useNavigate()
+  const { logout } = useAuth()
 
   // Close the drawer with Escape.
   useEffect(() => {
@@ -35,6 +38,11 @@ export function AppLayout() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [drawerOpen])
+
+  const handleLogout = async () => {
+    await logout()
+    navigate('/welcome', { replace: true })
+  }
 
   return (
     <div className="layout" data-drawer-open={drawerOpen}>
@@ -86,8 +94,12 @@ export function AppLayout() {
         <div className="sidebar__foot">
           <NavLink to="/profile" className="nav-link" onClick={closeDrawer}>
             <ProfileIcon />
-            <span>Profile &amp; privacy</span>
+            <span>Profile</span>
           </NavLink>
+          <button type="button" className="nav-link nav-link--button nav-link--logout" onClick={handleLogout}>
+            <span aria-hidden="true">↩</span>
+            <span>Log out</span>
+          </button>
         </div>
       </aside>
 

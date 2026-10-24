@@ -1,0 +1,117 @@
+.insights {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.insights__header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.insights__header h1 {
+  font-size: 1.8rem;
+}
+
+.insights__summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: var(--space-3);
+}
+
+.insights__stat {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
+}
+
+.insights__stat span {
+  color: var(--color-muted);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.insights__stat strong {
+  font-size: 1.25rem;
+}
+
+.insights__content {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: var(--space-5);
+}
+
+.insights__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.insights__list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.insights__list li:last-child {
+  border-bottom: 0;
+}
+
+.insights__list li strong,
+.insights__list li small {
+  display: block;
+}
+
+.insights__list small {
+  color: var(--color-muted);
+}
+
+.insights__panel {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.insights__note {
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-muted);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  display: grid;
+  gap: var(--space-2);
+}
+
+.positive {
+  color: var(--color-positive);
+}
+
+.negative {
+  color: var(--color-negative);
+}
+
+@media (max-width: 900px) {
+  .insights__summary,
+  .insights__content {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .insights__header {
+    display: grid;
+  }
+
+  .insights__summary,
+  .insights__content {
+    grid-template-columns: 1fr;
+  }
+}

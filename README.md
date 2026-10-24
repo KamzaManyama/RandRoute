@@ -946,8 +946,8 @@ Do not add secrets or real bank statements to this repository.
    - Or, with the Supabase CLI: `npx supabase link --project-ref <your-ref>` then `npx supabase db push`.
 3. **Authentication → Sign In / Providers → Email**: keep Email enabled and turn on **Confirm email**.
 4. **Authentication → URL Configuration**:
-   - Site URL: `http://localhost:5173`
-   - Redirect URLs: add `http://localhost:5173/auth/callback`
+   - Site URL: `http://localhost:4173`
+   - Redirect URLs: add `http://localhost:4173/auth/callback`
 5. **Authentication → Policies / Passwords**: set a minimum password length of at least 8.
 6. Optional: enable the `pg_cron` extension and schedule the stale-import cleanup (see the bottom of the functions migration).
 
@@ -978,7 +978,7 @@ Check the setup:
 ```powershell
 cd frontend
 npm install
-npm run dev                     # http://localhost:5173
+npm run dev                     # http://localhost:4173
 ```
 
 In development, Vite forwards `/api` requests to the backend, so the frontend needs no `.env`. In production, set `VITE_API_BASE_URL` to the backend URL.
@@ -987,9 +987,15 @@ In development, Vite forwards `/api` requests to the backend, so the frontend ne
 
 | Command | What it checks |
 | --- | --- |
-| `cd backend && npm test` | Config validation, health routes, security headers, CORS |
+| `cd backend && npm test` | Config, auth flows, PDF reading and statement parsing (synthetic PDFs), categorising, health and security |
 | `cd backend && npm run test:db` | Applies all migrations to an in-memory Postgres and checks RLS, import confirmation, duplicates, and deletion |
-| `cd frontend && npm test` | Side navigation, mobile drawer, backend status |
+| `cd frontend && npm test` | Sign-in/register/forgot password, side navigation, Statements upload → review → import |
+
+### Sample statements
+
+`cd backend && npm run fixtures` writes two synthetic statements (FNB-style and Capitec-style, made-up data) to `backend/fixtures/`. Upload them on the Statements screen to try the full import flow. PDFs are git-ignored.
+
+Bank formats are marked **beta** until each one is tested against real, anonymised statements. Every imported row is checked against the statement's running balance, and anything that doesn't match is flagged for review.
 
 Never commit `.env`, API keys, service-role keys, real bank statements, or personal financial data.
 

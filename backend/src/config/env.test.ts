@@ -11,7 +11,7 @@ describe("loadConfig", () => {
   it("applies safe defaults", () => {
     const config = loadConfig(validEnv);
     expect(config.port).toBe(4000);
-    expect(config.frontendOrigins).toEqual(["http://localhost:5173"]);
+    expect(config.frontendOrigins).toEqual(["http://localhost:4173"]);
     expect(config.ai.enabled).toBe(false);
   });
 
@@ -24,7 +24,7 @@ describe("loadConfig", () => {
   });
 
   it("splits multiple frontend origins", () => {
-    const config = loadConfig({ ...validEnv, FRONTEND_ORIGIN: "http://localhost:5173, https://randroute.app" });
-    expect(config.frontendOrigins).toEqual(["http://localhost:5173", "https://randroute.app"]);
+    const config = loadConfig({ ...validEnv, FRONTEND_ORIGIN: "http://localhost:4173, https://randroute.app" });
+    expect(config.frontendOrigins).toEqual(["http://localhost:4173", "https://randroute.app"]);
   });
 });

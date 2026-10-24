@@ -1,0 +1,86 @@
+.profile {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.profile__header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.profile__header h1 {
+  font-size: 1.8rem;
+}
+
+.profile__card {
+  padding: var(--space-5);
+}
+
+.profile__summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(140px, 1fr));
+  gap: var(--space-4);
+}
+
+.profile__summary p {
+  margin-bottom: var(--space-1);
+}
+
+.profile__summary h2 {
+  font-size: 1.2rem;
+}
+
+.profile__section {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.profile__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.profile__list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.profile__list li:last-child {
+  border-bottom: 0;
+}
+
+.profile__list div {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.profile__list small {
+  color: var(--color-muted);
+}
+
+.danger-button {
+  border: 1px solid rgb(192 57 43 / 20%);
+  color: var(--color-negative);
+  background: rgb(192 57 43 / 6%);
+}
+
+@media (max-width: 720px) {
+  .profile__header,
+  .profile__list li {
+    display: grid;
+    align-items: start;
+  }
+
+  .profile__summary {
+    grid-template-columns: 1fr;
+  }
+}

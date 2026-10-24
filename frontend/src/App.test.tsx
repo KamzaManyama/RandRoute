@@ -1,65 +1,123 @@
-import { describe, expect, it, vi } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { describe, expect, it } from 'vitest'
+import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router-dom'
-import App from './App'
+import { apiError, fakeBackend, signedInRoutes, signedOutRoutes, testSession } from './test/fakeBackend'
+import { renderApp } from './test/renderApp'
 
-function mockFetch(response: { ok: boolean; status: number; body: unknown } | 'network-error') {
-  return vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
-    if (response === 'network-error') throw new TypeError('Failed to fetch')
-    return new Response(JSON.stringify(response.body), { status: response.status })
+describe('signed out', () => {
+  it('sends visitors to the Welcome screen', async () => {
+    fakeBackend(signedOutRoutes)
+    renderApp('/')
+    expect(await screen.findByRole('heading', { name: /see where your money goes/i })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Create account' })).toBeInTheDocument()
   })
-}
 
-function renderAt(path = '/') {
-  return render(
-    <MemoryRouter initialEntries={[path]}>
-      <App />
-    </MemoryRouter>,
-  )
-}
+  it('signs in and lands on Home with the user greeted', async () => {
+    const { calls } = fakeBackend({
+      ...signedOutRoutes,
+      'POST /api/auth/login': () => ({ session: testSession }),
+      'GET /api/dashboard/summary': signedInRoutes['GET /api/dashboard/summary']!,
+    })
+    renderApp('/sign-in')
+    await userEvent.type(await screen.findByLabelText('Email'), 'maredi@example.com')
+    await userEvent.type(screen.getByLabelText('Password'), 'Passw0rd!')
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }))
+
+    expect(await screen.findByRole('heading', { name: 'Maredi' })).toBeInTheDocument()
+    const login = calls.find((c) => c.path === '/api/auth/login')!
+    expect(login.body).toEqual({ email: 'maredi@example.com', password: 'Passw0rd!' })
+    expect(login.headers.get('X-RandRoute-Client')).toBe('web')
+    // Signed-in calls carry the access token
+    const dashboard = calls.find((c) => c.path === '/api/dashboard/summary')!
+    expect(dashboard.headers.get('Authorization')).toBe('Bearer test-access-token')
+  })
+
+  it('shows the server message for a wrong password', async () => {
+    fakeBackend({
+      ...signedOutRoutes,
+      'POST /api/auth/login': () => apiError(401, 'invalid_credentials', 'Incorrect email or password.'),
+    })
+    renderApp('/sign-in')
+    await userEvent.type(await screen.findByLabelText('Email'), 'maredi@example.com')
+    await userEvent.type(screen.getByLabelText('Password'), 'wrong')
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Incorrect email or password.')
+  })
+
+  it('checks the register form before sending it', async () => {
+    const { calls } = fakeBackend(signedOutRoutes)
+    renderApp('/register')
+    await userEvent.type(await screen.findByLabelText('Email'), 'maredi@example.com')
+    await userEvent.type(screen.getByLabelText('Password'), 'Passw0rd1')
+    await userEvent.type(screen.getByLabelText('Confirm password'), 'Different1')
+    await userEvent.click(screen.getByRole('button', { name: 'Create account' }))
+    expect(await screen.findByText("Passwords don't match.")).toBeInTheDocument()
+    expect(calls.some((c) => c.path === '/api/auth/register')).toBe(false)
+  })
+
+  it('tells new users to check their email after registering', async () => {
+    fakeBackend({
+      ...signedOutRoutes,
+      'POST /api/auth/register': () => ({ status: 'verification_required', message: 'Check your inbox.' }),
+    })
+    renderApp('/register')
+    await userEvent.type(await screen.findByLabelText('Email'), 'new@example.com')
+    await userEvent.type(screen.getByLabelText('Password'), 'Passw0rd1')
+    await userEvent.type(screen.getByLabelText('Confirm password'), 'Passw0rd1')
+    await userEvent.click(screen.getByRole('button', { name: 'Create account' }))
+    expect(await screen.findByRole('heading', { name: 'Check your email' })).toBeInTheDocument()
+    expect(screen.getByText('new@example.com')).toBeInTheDocument()
+  })
+
+  it('gives the same answer for forgot password whatever the email', async () => {
+    fakeBackend({
+      ...signedOutRoutes,
+      'POST /api/auth/forgot-password': () => ({ message: "If an account exists for that email, we've sent a link." }),
+    })
+    renderApp('/forgot-password')
+    await userEvent.type(await screen.findByLabelText('Email'), 'anyone@example.com')
+    await userEvent.click(screen.getByRole('button', { name: 'Send reset link' }))
+    expect(await screen.findByText(/If an account exists/)).toBeInTheDocument()
+  })
+})
 
 describe('side navigation', () => {
-  it('shows the five main destinations plus profile, and no bottom nav', () => {
-    mockFetch({ ok: true, status: 200, body: { status: 'ok', ai: 'disabled' } })
-    renderAt()
-    const nav = screen.getByRole('complementary', { name: 'Main' })
-    for (const label of ['Home', 'Statements', 'Spending', 'Budget', 'Insights', 'Profile & privacy']) {
+  it('shows the five destinations plus profile, and no bottom nav', async () => {
+    fakeBackend(signedInRoutes)
+    renderApp('/')
+    const nav = await screen.findByRole('complementary', { name: 'Main' })
+    for (const label of ['Home', 'Statements', 'Spending', 'Budget', 'Insights']) {
       expect(within(nav).getByRole('link', { name: label })).toBeInTheDocument()
     }
+    expect(within(nav).getByRole('link', { name: /profile/i })).toBeInTheDocument()
     expect(document.querySelector('.bottom-nav')).toBeNull()
   })
 
-  it('navigates and marks the current page', async () => {
-    mockFetch({ ok: true, status: 200, body: { status: 'ok', ai: 'disabled' } })
-    renderAt()
-    await userEvent.click(screen.getByRole('link', { name: 'Budget' }))
-    expect(screen.getByRole('heading', { level: 1, name: 'Budget' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Budget' })).toHaveAttribute('aria-current', 'page')
-  })
-
   it('opens and closes the mobile drawer', async () => {
-    mockFetch({ ok: true, status: 200, body: { status: 'ok', ai: 'disabled' } })
-    renderAt()
-    const open = screen.getByRole('button', { name: 'Open navigation' })
+    fakeBackend(signedInRoutes)
+    renderApp('/')
+    const open = await screen.findByRole('button', { name: 'Open navigation' })
     expect(open).toHaveAttribute('aria-expanded', 'false')
     await userEvent.click(open)
     expect(open).toHaveAttribute('aria-expanded', 'true')
     await userEvent.keyboard('{Escape}')
     expect(open).toHaveAttribute('aria-expanded', 'false')
   })
+
+  it('signs out and returns to Welcome', async () => {
+    const { calls } = fakeBackend(signedInRoutes)
+    renderApp('/')
+    await userEvent.click(await screen.findByRole('button', { name: /log out|sign out/i }))
+    expect(await screen.findByRole('heading', { name: /see where your money goes/i })).toBeInTheDocument()
+    expect(calls.some((c) => c.path === '/api/auth/logout')).toBe(true)
+  })
 })
 
-describe('home setup status', () => {
-  it('shows when the backend is connected', async () => {
-    mockFetch({ ok: true, status: 200, body: { status: 'ok', ai: 'disabled' } })
-    renderAt()
-    expect(await screen.findByText(/Backend connected/)).toBeInTheDocument()
-  })
-
-  it('shows a friendly message when the backend is down', async () => {
-    mockFetch('network-error')
-    renderAt()
-    expect(await screen.findByRole('alert')).toHaveTextContent(/Cannot reach RandRoute/)
+describe('home', () => {
+  it('invites a new user to import a statement and says totals are not a live balance', async () => {
+    fakeBackend(signedInRoutes)
+    renderApp('/')
+    expect(await screen.findByRole('link', { name: 'Upload a statement' })).toHaveAttribute('href', '/statements/upload')
+    expect(screen.getByText(/not a live bank balance/i)).toBeInTheDocument()
   })
 })

@@ -73,8 +73,8 @@ describe("security basics", () => {
   });
 
   it("only allows the configured frontend origin", async () => {
-    const allowed = await request(buildApp()).get("/api/health").set("Origin", "http://localhost:5173");
-    expect(allowed.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
+    const allowed = await request(buildApp()).get("/api/health").set("Origin", "http://localhost:4173");
+    expect(allowed.headers["access-control-allow-origin"]).toBe("http://localhost:4173");
 
     const blocked = await request(buildApp()).get("/api/health").set("Origin", "https://evil.example");
     expect(blocked.headers["access-control-allow-origin"]).toBeUndefined();

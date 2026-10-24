@@ -6,7 +6,9 @@ import { defineConfig } from 'vite'
 export default defineConfig({
   plugins: [react()],
   server: {
-    port: 5173,
+    host: '0.0.0.0',
+    port: 4173,
+    strictPort: false,
     // In development, /api calls go to the backend so no CORS setup is needed.
     proxy: {
       '/api': 'http://localhost:4000',

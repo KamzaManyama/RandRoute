@@ -1,11 +1,12 @@
 import type { ErrorRequestHandler, RequestHandler } from "express";
 
-/** An error that is safe to show to the user. */
+/** An error that is safe to show to the user. `fields` maps form field names to messages. */
 export class HttpError extends Error {
   constructor(
     public readonly status: number,
     public readonly code: string,
     message: string,
+    public readonly fields?: Record<string, string>,
   ) {
     super(message);
     this.name = "HttpError";
@@ -22,7 +23,9 @@ export const notFound: RequestHandler = (_req, _res, next) => {
  */
 export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
   if (err instanceof HttpError) {
-    res.status(err.status).json({ error: { code: err.code, message: err.message } });
+    res.status(err.status).json({
+      error: { code: err.code, message: err.message, ...(err.fields ? { fields: err.fields } : {}) },
+    });
     return;
   }
 
