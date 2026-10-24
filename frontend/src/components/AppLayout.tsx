@@ -41,7 +41,7 @@ export function AppLayout() {
 
   const handleLogout = async () => {
     await logout()
-    navigate('/welcome', { replace: true })
+    navigate('/', { replace: true })
   }
 
   return (

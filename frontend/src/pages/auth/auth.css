@@ -236,3 +236,11 @@
     padding: var(--space-6) var(--space-5);
   }
 }
+
+.not-found__path {
+  font-size: 0.9em;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--color-surface-muted);
+  overflow-wrap: anywhere;
+}

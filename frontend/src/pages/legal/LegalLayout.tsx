@@ -10,7 +10,7 @@ export function LegalLayout({ title, summary, children }: { title: string; summa
   return (
     <div className="legal">
       <header className="legal__top">
-        <Link to={status === 'signedIn' ? '/' : '/welcome'} className="brand">
+        <Link to="/" className="brand">
           <span className="brand__mark" aria-hidden>R</span>
           RandRoute
         </Link>

@@ -27,4 +27,36 @@ describe("loadConfig", () => {
     const config = loadConfig({ ...validEnv, FRONTEND_ORIGIN: "http://localhost:4173, https://randroute.app" });
     expect(config.frontendOrigins).toEqual(["http://localhost:4173", "https://randroute.app"]);
   });
+
+  it("treats empty values as not set (e.g. NODE_ENV=)", () => {
+    const config = loadConfig({ ...validEnv, NODE_ENV: "", PORT: "", AI_ENABLED: "" });
+    expect(config.nodeEnv).toBe("development");
+    expect(config.port).toBe(4000);
+    expect(config.ai.enabled).toBe(false);
+  });
+
+  it("accepts the older Supabase key names", () => {
+    const config = loadConfig({
+      SUPABASE_URL: validEnv.SUPABASE_URL,
+      SUPABASE_ANON_KEY: "anon-key-0123456789abcdef",
+      SUPABASE_SERVICE_ROLE_KEY: "service-key-0123456789abcdef",
+    });
+    expect(config.supabase.publishableKey).toBe("anon-key-0123456789abcdef");
+    expect(config.supabase.secretKey).toBe("service-key-0123456789abcdef");
+  });
+
+  it("uses FRONTEND_URL for the allowed origin and the email redirect", () => {
+    const config = loadConfig({ ...validEnv, FRONTEND_URL: "https://randroute-two.vercel.app/" });
+    expect(config.frontendOrigins).toEqual(["https://randroute-two.vercel.app"]);
+    expect(config.supabase.authRedirectUrl).toBe("https://randroute-two.vercel.app/auth/callback");
+  });
+
+  it("on Vercel, falls back to the stable production address, not the per-deployment one", () => {
+    const config = loadConfig({ ...validEnv, VERCEL_URL: "randroute-abc123.vercel.app", VERCEL_PROJECT_PRODUCTION_URL: "randroute-two.vercel.app" });
+    expect(config.supabase.authRedirectUrl).toBe("https://randroute-two.vercel.app/auth/callback");
+  });
+
+  it("explains a bad FRONTEND_URL", () => {
+    expect(() => loadConfig({ ...validEnv, FRONTEND_URL: "not a url" })).toThrow(/FRONTEND_URL/);
+  });
 });

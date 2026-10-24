@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from './useAuth'
+import { WelcomePage } from '../pages/auth/WelcomePage'
 
 function LoadingScreen() {
   return (
@@ -11,12 +12,18 @@ function LoadingScreen() {
   )
 }
 
-/** Only for signed-in users; everyone else goes to Welcome and comes back afterwards. */
+/**
+ * Only for signed-in users. Signed-out visitors see Welcome right at "/" (the
+ * site address); any other app page sends them to "/" and back afterwards.
+ */
 export function RequireAuth({ children }: { children: ReactNode }) {
   const { status } = useAuth()
   const location = useLocation()
   if (status === 'loading') return <LoadingScreen />
-  if (status === 'signedOut') return <Navigate to="/welcome" replace state={{ from: location.pathname }} />
+  if (status === 'signedOut') {
+    if (location.pathname === '/') return <WelcomePage />
+    return <Navigate to="/" replace state={{ from: location.pathname }} />
+  }
   return children
 }
 

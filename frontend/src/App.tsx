@@ -1,9 +1,8 @@
-import { Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes } from 'react-router-dom'
 import { AppLayout } from './components/AppLayout'
 import { PublicOnly, RequireAuth } from './auth/RouteGuards'
 import { HomePage } from './pages/HomePage'
-import { ComingSoonPage } from './pages/ComingSoonPage'
-import { WelcomePage } from './pages/auth/WelcomePage'
+import { NotFoundPage } from './pages/NotFoundPage'
 import { SignInPage } from './pages/auth/SignInPage'
 import { RegisterPage } from './pages/auth/RegisterPage'
 import { ForgotPasswordPage } from './pages/auth/ForgotPasswordPage'
@@ -29,7 +28,8 @@ export default function App() {
   return (
     <Routes>
       {/* Signed-out screens */}
-      <Route path="welcome" element={<PublicOnly><WelcomePage /></PublicOnly>} />
+      {/* Welcome lives at "/" for signed-out visitors (see RequireAuth); old links still work */}
+      <Route path="welcome" element={<Navigate to="/" replace />} />
       <Route path="sign-in" element={<PublicOnly><SignInPage /></PublicOnly>} />
       <Route path="register" element={<PublicOnly><RegisterPage /></PublicOnly>} />
 
@@ -58,9 +58,11 @@ export default function App() {
           <Route path="insights" element={<InsightsPage />} />
           <Route path="insights/explain" element={<ExplainPage />} />
           <Route path="profile" element={<ProfilePage />} />
-          <Route path="*" element={<ComingSoonPage title="Page not found" description="That page does not exist." />} />
         </Route>
       </Route>
+
+      {/* Custom 404 for any address that isn't a page */}
+      <Route path="*" element={<NotFoundPage />} />
     </Routes>
   )
 }

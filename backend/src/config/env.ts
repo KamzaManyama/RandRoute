@@ -5,18 +5,49 @@ const booleanString = z
   .default("false")
   .transform((value) => value === "true");
 
-const resolveFrontendOrigins = (env: NodeJS.ProcessEnv): string[] => {
-  const explicit = env.FRONTEND_ORIGIN?.trim();
-  if (explicit) return explicit.split(",").map((origin) => origin.trim()).filter(Boolean);
+/**
+ * Makes the settings forgiving before they're checked:
+ * - empty values (e.g. `NODE_ENV=`) count as "not set" instead of failing;
+ * - older Supabase names still work (`SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`);
+ * - `FRONTEND_URL` fills in both FRONTEND_ORIGIN and AUTH_REDIRECT_URL.
+ */
+export function normaliseEnv(input: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (typeof value === "string" && value.trim() !== "") env[key] = value.trim();
+  }
+  env.SUPABASE_PUBLISHABLE_KEY ??= env.SUPABASE_ANON_KEY;
+  env.SUPABASE_SECRET_KEY ??= env.SUPABASE_SERVICE_ROLE_KEY;
+  if (env.FRONTEND_URL) {
+    let origin: string;
+    try {
+      origin = new URL(env.FRONTEND_URL).origin;
+    } catch {
+      throw new Error(`Invalid backend configuration:\n  - FRONTEND_URL: not a valid URL (e.g. https://randroute-two.vercel.app)`);
+    }
+    env.FRONTEND_ORIGIN ??= origin;
+    env.AUTH_REDIRECT_URL ??= `${origin}/auth/callback`;
+  }
+  return env;
+}
 
-  if (env.VERCEL_URL) return [`https://${env.VERCEL_URL}`];
-  return ["http://localhost:4173"];
+/** The site's stable public address on Vercel (not the per-deployment URL, which changes every deploy). */
+const vercelSiteUrl = (env: NodeJS.ProcessEnv): string | undefined => {
+  const host = env.VERCEL_PROJECT_PRODUCTION_URL ?? env.VERCEL_URL;
+  return host ? `https://${host}` : undefined;
+};
+
+const resolveFrontendOrigins = (env: NodeJS.ProcessEnv): string[] => {
+  const explicit = env.FRONTEND_ORIGIN;
+  if (explicit) return explicit.split(",").map((origin) => origin.trim()).filter(Boolean);
+  const site = vercelSiteUrl(env);
+  return site ? [site] : ["http://localhost:4173"];
 };
 
 const resolveAuthRedirectUrl = (env: NodeJS.ProcessEnv): string => {
-  if (env.AUTH_REDIRECT_URL && env.AUTH_REDIRECT_URL.trim()) return env.AUTH_REDIRECT_URL.trim();
-  if (env.VERCEL_URL) return `https://${env.VERCEL_URL}/auth/callback`;
-  return "http://localhost:4173/auth/callback";
+  if (env.AUTH_REDIRECT_URL) return env.AUTH_REDIRECT_URL;
+  const site = vercelSiteUrl(env);
+  return site ? `${site}/auth/callback` : "http://localhost:4173/auth/callback";
 };
 
 const envSchema = z.object({
@@ -25,8 +56,8 @@ const envSchema = z.object({
   FRONTEND_ORIGIN: z.string().optional(),
 
   SUPABASE_URL: z.url({ error: "missing or invalid — use your project URL, e.g. https://xyz.supabase.co" }),
-  SUPABASE_PUBLISHABLE_KEY: z.string({ error: "missing — copy the publishable key (sb_publishable_...) from Supabase" }).min(1, { error: "empty — fill it in backend/.env", abort: true }).min(20, "looks too short"),
-  SUPABASE_SECRET_KEY: z.string({ error: "missing — copy the secret key (sb_secret_...) from Supabase" }).min(1, { error: "empty — fill it in backend/.env", abort: true }).min(20, "looks too short"),
+  SUPABASE_PUBLISHABLE_KEY: z.string({ error: "missing — copy the publishable (anon) key from Supabase. SUPABASE_ANON_KEY also works" }).min(1, { error: "empty — fill it in backend/.env", abort: true }).min(20, "looks too short"),
+  SUPABASE_SECRET_KEY: z.string({ error: "missing — copy the secret (service_role) key from Supabase. SUPABASE_SERVICE_ROLE_KEY also works" }).min(1, { error: "empty — fill it in backend/.env", abort: true }).min(20, "looks too short"),
   SUPABASE_JWKS_URL: z.url().optional(),
   AUTH_REDIRECT_URL: z.string().optional(),
 
@@ -72,7 +103,8 @@ export type AppConfig = {
 };
 
 /** Reads and validates environment variables. Throws a readable error listing what is missing. */
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
+export function loadConfig(rawEnv: NodeJS.ProcessEnv = process.env): AppConfig {
+  const env = normaliseEnv(rawEnv);
   const parsed = envSchema.safeParse(env);
   if (!parsed.success) {
     const problems = parsed.error.issues

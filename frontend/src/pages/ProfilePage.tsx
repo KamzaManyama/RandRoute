@@ -216,7 +216,7 @@ function DangerCard() {
       } else {
         await api.profile.deleteAccount(password)
         await logout()
-        navigate('/welcome', { replace: true })
+        navigate('/', { replace: true })
       }
     } catch (err) {
       if (err instanceof ApiError) setFieldErrors(err.fields)

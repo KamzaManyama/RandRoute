@@ -34,7 +34,7 @@ export function AuthLayout({ title, subtitle, children, footer, hero = DEFAULT_H
   return (
     <div className="auth">
       <aside className="auth__panel">
-        <Link to="/welcome" className="brand auth__brand">
+        <Link to="/" className="brand auth__brand">
           <span className="brand__mark auth__mark" aria-hidden>R</span>
           RandRoute
         </Link>

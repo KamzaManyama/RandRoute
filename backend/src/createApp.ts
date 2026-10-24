@@ -53,7 +53,7 @@ export function createApp({ config, supabase, gemini }: AppDeps): Express {
   app.use("/api", spendingRouter(supabase)); // /spending/summary, /transactions, /sources
   app.use("/api/budgets", budgetsRouter(supabase));
   app.use("/api/profile", profileRouter({ config, supabase }));
-  app.use("/api", insightsRouter({ config, supabase, gemini })); // /insights, /insights/explain, /ask, /budget-suggestions
+  app.use("/api", insightsRouter({ config, supabase, gemini })); // /insights, /insights/explain(/stream), /budget-suggestions
 
   app.use(notFound);
   app.use(errorHandler);

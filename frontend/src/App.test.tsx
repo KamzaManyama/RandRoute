@@ -84,6 +84,36 @@ describe('signed out', () => {
   })
 })
 
+describe('site address and 404', () => {
+  it('shows Welcome right at "/" for signed-out visitors', async () => {
+    fakeBackend(signedOutRoutes)
+    renderApp('/')
+    expect(await screen.findByRole('heading', { name: 'Welcome to RandRoute' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Create account' })).toHaveAttribute('href', '/register')
+  })
+
+  it('sends old /welcome links to "/"', async () => {
+    fakeBackend(signedOutRoutes)
+    renderApp('/welcome')
+    expect(await screen.findByRole('heading', { name: 'Welcome to RandRoute' })).toBeInTheDocument()
+  })
+
+  it('shows the custom 404 page for unknown addresses when signed out', async () => {
+    fakeBackend(signedOutRoutes)
+    renderApp('/no-such-page')
+    expect(await screen.findByRole('heading', { name: 'Page not found' })).toBeInTheDocument()
+    expect(screen.getByText('/no-such-page')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Go to the welcome page' })).toHaveAttribute('href', '/')
+  })
+
+  it('shows the custom 404 page when signed in, with links back into the app', async () => {
+    fakeBackend(signedInRoutes)
+    renderApp('/statments-typo')
+    expect(await screen.findByRole('heading', { name: 'Page not found' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Go to Home' })).toHaveAttribute('href', '/')
+  })
+})
+
 describe('policies', () => {
   it('sign-in screens link to all three policies', async () => {
     fakeBackend(signedOutRoutes)
