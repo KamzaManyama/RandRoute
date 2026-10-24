@@ -8,8 +8,15 @@ import type { AppConfig } from "../config/env.js";
  */
 export type GeminiService = {
   isEnabled: boolean;
-  generateText: (prompt: string) => Promise<string>;
+  generateText: (prompt: string, options?: { system?: string; timeoutMs?: number }) => Promise<string>;
 };
+
+export class AiUnavailableError extends Error {
+  constructor(message = "AI explanations are currently unavailable.") {
+    super(message);
+    this.name = "AiUnavailableError";
+  }
+}
 
 export function createGeminiService(config: AppConfig["ai"]): GeminiService {
   if (!config.enabled || !config.geminiApiKey) {
@@ -25,19 +32,46 @@ export function createGeminiService(config: AppConfig["ai"]): GeminiService {
 
   return {
     isEnabled: true,
-    generateText: async (prompt) => {
-      const response = await client.models.generateContent({
-        model: config.geminiModel,
-        contents: prompt,
+    generateText: async (prompt, options = {}) => {
+      const timeoutMs = options.timeoutMs ?? 25_000;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new AiUnavailableError("The AI service took too long to answer.")), timeoutMs);
       });
-      return response.text ?? "";
+      const request = () =>
+        client.models.generateContent({
+          model: config.geminiModel,
+          contents: prompt,
+          config: {
+            systemInstruction: options.system,
+            temperature: 0.3,
+            maxOutputTokens: 700,
+          },
+        });
+      // One retry when Gemini is briefly overloaded (503).
+      const withRetry = async () => {
+        try {
+          return await request();
+        } catch (error) {
+          if ((error as { status?: number })?.status !== 503) throw error;
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          return request();
+        }
+      };
+      try {
+        const response = await Promise.race([withRetry(), timeout]);
+        const text = response.text?.trim();
+        if (!text) throw new AiUnavailableError("The AI service didn't return an answer.");
+        return text;
+      } catch (error) {
+        if (error instanceof AiUnavailableError) throw error;
+        const status = (error as { status?: number })?.status;
+        throw new AiUnavailableError(
+          status === 429 ? "The AI service is busy or out of quota. Try again later." : "The AI service is unavailable right now.",
+        );
+      } finally {
+        clearTimeout(timer);
+      }
     },
   };
-}
-
-export class AiUnavailableError extends Error {
-  constructor() {
-    super("AI explanations are currently unavailable.");
-    this.name = "AiUnavailableError";
-  }
 }

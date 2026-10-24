@@ -12,6 +12,9 @@ import { authRouter, CLIENT_HEADER } from "./routes/auth.js";
 import { dashboardRouter } from "./routes/dashboard.js";
 import { categoriesRouter, statementsRouter } from "./routes/statements.js";
 import { spendingRouter } from "./routes/spending.js";
+import { budgetsRouter } from "./routes/budgets.js";
+import { profileRouter } from "./routes/profile.js";
+import { insightsRouter } from "./routes/insights.js";
 
 export type AppDeps = {
   config: AppConfig;
@@ -48,6 +51,9 @@ export function createApp({ config, supabase, gemini }: AppDeps): Express {
   app.use("/api/statements", statementsRouter(supabase));
   app.use("/api/categories", categoriesRouter(supabase));
   app.use("/api", spendingRouter(supabase)); // /spending/summary, /transactions, /sources
+  app.use("/api/budgets", budgetsRouter(supabase));
+  app.use("/api/profile", profileRouter({ config, supabase }));
+  app.use("/api", insightsRouter({ config, supabase, gemini })); // /insights, /insights/explain, /ask, /budget-suggestions
 
   app.use(notFound);
   app.use(errorHandler);

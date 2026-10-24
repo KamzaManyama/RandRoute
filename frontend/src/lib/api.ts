@@ -26,6 +26,8 @@ export type RequestOptions = {
   /** Access token for signed-in requests. */
   token?: string | null
   signal?: AbortSignal
+  /** 'blob' for file downloads (e.g. exports). */
+  responseType?: 'json' | 'blob'
 }
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
@@ -53,6 +55,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     throw new ApiError(0, 'network_error', 'Cannot reach RandRoute right now. Check your connection and try again.')
   }
 
+  if (response.ok && options.responseType === 'blob') return (await response.blob()) as T
   const data: unknown = response.status === 204 ? null : await response.json().catch(() => null)
 
   if (!response.ok) {

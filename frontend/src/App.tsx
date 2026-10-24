@@ -17,6 +17,10 @@ import { TransactionDetailPage } from './pages/TransactionDetailPage'
 import { BudgetPage } from './pages/BudgetPage'
 import { InsightsPage } from './pages/InsightsPage'
 import { ProfilePage } from './pages/ProfilePage'
+import { BudgetPlanPage } from './pages/BudgetPlanPage'
+import { AskPage } from './pages/AskPage'
+import { SetupPage } from './pages/SetupPage'
+import { ProfileProvider, SetupGate } from './auth/ProfileProvider'
 
 export default function App() {
   return (
@@ -31,27 +35,23 @@ export default function App() {
       <Route path="reset-password" element={<ResetPasswordPage />} />
       <Route path="auth/callback" element={<AuthCallbackPage />} />
 
-      {/* The app itself */}
-      <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
-        <Route index element={<HomePage />} />
-        <Route path="statements" element={<StatementsPage />} />
-        <Route path="statements/upload" element={<UploadStatementPage />} />
-        <Route path="statements/:id" element={<StatementDetailPage />} />
-        <Route path="spending" element={<SpendingPage />} />
-        <Route path="spending/:id" element={<TransactionDetailPage />} />
-        <Route
-          path="budget"
-          element={<BudgetPage />}
-        />
-        <Route
-          path="insights"
-          element={<InsightsPage />}
-        />
-        <Route
-          path="profile"
-          element={<ProfilePage />}
-        />
-        <Route path="*" element={<ComingSoonPage title="Page not found" description="That page does not exist." />} />
+      {/* Signed-in: profile loads once; new users go through setup first */}
+      <Route element={<RequireAuth><ProfileProvider /></RequireAuth>}>
+        <Route path="setup" element={<SetupPage />} />
+        <Route element={<SetupGate><AppLayout /></SetupGate>}>
+          <Route index element={<HomePage />} />
+          <Route path="statements" element={<StatementsPage />} />
+          <Route path="statements/upload" element={<UploadStatementPage />} />
+          <Route path="statements/:id" element={<StatementDetailPage />} />
+          <Route path="spending" element={<SpendingPage />} />
+          <Route path="spending/:id" element={<TransactionDetailPage />} />
+          <Route path="budget" element={<BudgetPage />} />
+          <Route path="budget/plan" element={<BudgetPlanPage />} />
+          <Route path="insights" element={<InsightsPage />} />
+          <Route path="insights/ask" element={<AskPage />} />
+          <Route path="profile" element={<ProfilePage />} />
+          <Route path="*" element={<ComingSoonPage title="Page not found" description="That page does not exist." />} />
+        </Route>
       </Route>
     </Routes>
   )

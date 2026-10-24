@@ -26,7 +26,7 @@ const envSchema = z.object({
 
   AI_ENABLED: booleanString,
   GEMINI_API_KEY: z.string().optional().transform((value) => (value ? value : undefined)),
-  GEMINI_MODEL: z.string().min(1).default("gemini-2.5-flash"),
+  GEMINI_MODEL: z.string().min(1).default("gemini-3.8-flash"),
 });
 
 export type AppConfig = {

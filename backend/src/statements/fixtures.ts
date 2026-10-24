@@ -106,3 +106,78 @@ export const capitecStyle: FixtureSpec = {
   ],
   closingLine: { label: "Closing Balance", amount: "2 039.75" },
 };
+
+// ---------------------------------------------------------------------------
+// Monthly demo statements (FNB-style) with realistic, made-up spending.
+// Running balances are calculated so every row passes the balance check.
+// ---------------------------------------------------------------------------
+
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function rand(minor: number): string {
+  const [whole, cents] = (minor / 100).toFixed(2).split(".") as [string, string];
+  return `${whole.replace(/\B(?=(\d{3})+(?!\d))/g, " ")}.${cents}`;
+}
+
+/** Deterministic wobble so each month differs a little. */
+function wobble(seed: number, spread: number): number {
+  const x = Math.sin(seed * 9301 + 49297) * 233280;
+  return Math.round((x - Math.floor(x) - 0.5) * 2 * spread);
+}
+
+type DemoTx = { day: number; description: string; minor: number; credit?: boolean };
+
+function demoTransactions(m: number): DemoTx[] {
+  return [
+    { day: 1, description: "Debit Order Example Properties Rent", minor: 850000 },
+    { day: 2, description: "POS Purchase Checkers Sandton", minor: 118000 + wobble(m, 15000) },
+    { day: 3, description: "Uber Trip", minor: 9200 + wobble(m + 1, 3000) },
+    { day: 5, description: "Vodacom Prepaid Airtime", minor: 29900 },
+    { day: 6, description: "Eskom Prepaid Electricity", minor: 65000 + wobble(m + 2, 12000) },
+    { day: 8, description: "Netflix.com Subscription", minor: 19900 },
+    { day: 9, description: "Spotify Premium", minor: 7999 },
+    { day: 10, description: "Engen Fuel Rosebank", minor: 85000 + wobble(m + 3, 20000) },
+    { day: 12, description: "POS Purchase Woolworths Food", minor: 64000 + wobble(m + 4, 12000) },
+    { day: 14, description: "Uber Eats Order", minor: 21000 + wobble(m + 5, 9000) },
+    { day: 15, description: "Transfer To Savings Own Acc", minor: 200000 },
+    { day: 16, description: "Discovery Life Insurance Debit Order", minor: 45000 },
+    { day: 18, description: "Pick n Pay Rosebank", minor: 52000 + wobble(m + 6, 10000) },
+    { day: 20, description: "Dis-Chem Pharmacy", minor: 18000 + wobble(m + 7, 8000) },
+    { day: 22, description: "Takealot Online", minor: 35000 + wobble(m + 8, 25000) },
+    { day: 25, description: "Salary ACME Holdings", minor: 2850000, credit: true },
+    { day: 26, description: "Nandos Rosebank", minor: 32000 + wobble(m + 9, 9000) },
+    { day: 27, description: "Virgin Active Gym Debit Order", minor: 59900 },
+    { day: 28, description: "Payment Received From M Example", minor: 50000, credit: true },
+    { day: 28, description: "#Monthly Account Fee", minor: 6900 },
+  ];
+}
+
+/** A whole-month FNB-style statement for "YYYY-MM". */
+export function demoMonthStatement(month: string, openingMinor: number): { spec: FixtureSpec; closingMinor: number } {
+  const [year, mon] = month.split("-").map(Number) as [number, number];
+  const lastDay = new Date(Date.UTC(year, mon, 0)).getUTCDate();
+  let balance = openingMinor;
+  const rows: FixtureRow[] = demoTransactions(mon).map((t) => {
+    balance += t.credit ? t.minor : -t.minor;
+    return {
+      date: `${String(t.day).padStart(2, "0")} ${SHORT[mon - 1]}`,
+      description: [t.description],
+      amount: `${rand(t.minor)}${t.credit ? "Cr" : ""}`,
+      balance: `${rand(balance)}Cr`,
+    };
+  });
+  return {
+    closingMinor: balance,
+    spec: {
+      bankLine: "First National Bank",
+      headerLines: [
+        "Gold Cheque Account",
+        `Statement Period : 01 ${MONTH_NAMES[mon - 1]} ${year} to ${lastDay} ${MONTH_NAMES[mon - 1]} ${year}`,
+      ],
+      openingLine: { label: "Opening Balance", amount: `${rand(openingMinor)}Cr` },
+      rows,
+      closingLine: { label: "Closing Balance", amount: `${rand(balance)}Cr` },
+    },
+  };
+}

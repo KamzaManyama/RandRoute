@@ -62,12 +62,23 @@ export const emptyDashboard = {
   coverage: { hasImports: false, statementCount: 0, coversWholeMonth: false, hasWarnings: false },
 }
 
+export const testProfile = {
+  email: "maredi@example.com",
+  displayName: "Maredi Manyama",
+  currency: "ZAR",
+  monthlyBudgetTargetMinor: null,
+  savingsTargetMinor: null,
+  setupCompleted: true,
+  ai: { available: true, consent: "not_asked", consentUpdatedAt: null, policyVersion: "2026-10" },
+}
+
 /** Routes every signed-in screen needs. */
 export const signedInRoutes: Record<string, Handler> = {
   'POST /api/auth/refresh': () => ({ session: testSession }),
   'POST /api/auth/logout': () => null,
   'GET /api/dashboard/summary': () => emptyDashboard,
   'GET /api/health': () => ({ status: 'ok', ai: 'disabled' }),
+  'GET /api/profile': () => ({ profile: testProfile }),
 }
 
 export const signedOutRoutes: Record<string, Handler> = {

@@ -195,3 +195,18 @@ export function recurringCandidates(rows: (FinanceRow & { cleaned_description: s
   }
   return result.sort((a, b) => b.typicalAmountMinor - a.typicalAmountMinor).slice(0, 10);
 }
+
+// ---------------------------------------------------------------------------
+// Budgets
+// ---------------------------------------------------------------------------
+
+export type LimitStatus = "on_track" | "near_limit" | "reached" | "exceeded";
+
+/** README: remaining = limit − qualifying spending (may be negative). */
+export function limitStatus(limit: number, spent: number): LimitStatus {
+  if (spent > limit) return "exceeded";
+  if (limit > 0 && spent === limit) return "reached";
+  if (limit > 0 && spent >= limit * 0.85) return "near_limit";
+  if (limit === 0 && spent > 0) return "exceeded";
+  return "on_track";
+}

@@ -169,6 +169,60 @@ function toQuery(params: Record<string, string | number | undefined>): string {
   return text ? `?${text}` : ''
 }
 
+export type LimitStatus = 'on_track' | 'near_limit' | 'reached' | 'exceeded'
+
+export type BudgetView = {
+  month: string
+  budget: { id: string; expectedIncomeMinor: number | null; savingsTargetMinor: number | null } | null
+  limits: { categoryId: string; name: string; limitMinor: number; spentMinor: number; remainingMinor: number; status: LimitStatus }[]
+  unbudgeted: { categoryId: string | null; name: string; spentMinor: number }[]
+  totals: { plannedMinor: number; spentInBudgetMinor: number; remainingMinor: number; totalSpendingMinor: number; refundsMinor: number }
+  coverage: Coverage
+  previousMonthHasBudget: boolean
+  history: { months: number; averages: { categoryId: string; name: string; averageMinor: number }[] }
+}
+
+export type BudgetDraft = {
+  expectedIncomeMinor: number | null
+  savingsTargetMinor: number | null
+  limits: { categoryId: string; limitMinor: number }[]
+}
+
+export type AiConsent = 'granted' | 'outdated' | 'not_asked' | 'withdrawn'
+
+export type ProfileData = {
+  email: string | null
+  displayName: string | null
+  currency: string
+  monthlyBudgetTargetMinor: number | null
+  savingsTargetMinor: number | null
+  setupCompleted: boolean
+  ai: { available: boolean; consent: AiConsent; consentUpdatedAt: string | null; policyVersion: string }
+}
+
+export type Insights = {
+  month: string
+  coverage: Coverage
+  totals: {
+    moneyInMinor: number
+    moneyOutMinor: number
+    netMinor: number
+    refundsMinor: number
+    unclassifiedInMinor: number
+    previousMoneyOutMinor: number | null
+    moneyOutChangePercent: number | null
+  }
+  comparison: { month: string; available: boolean; reason: string | null }
+  topCategories: { categoryId: string | null; name: string; totalMinor: number; count: number }[]
+  changes: { categoryId: string | null; name: string; totalMinor: number; previousMinor: number; changeMinor: number; changePercent: number | null }[]
+  unusual: { categoryId: string | null; name: string; totalMinor: number; averageMinor: number; months: number }[]
+  unusualCheck: { available: boolean; historyMonths: number; reason: string | null }
+  budget: { hasBudget: boolean; overCount: number; limits: { name: string; limitMinor: number; spentMinor: number; status: LimitStatus }[] }
+  limitations: string[]
+}
+
+export type AiAnswer = { text: string; basedOn: unknown; generatedAt: string; question?: string }
+
 /** Signed-in API calls. Each one sends the access token and refreshes it if needed. */
 export function useApi() {
   const { authRequest } = useAuth()
@@ -193,6 +247,35 @@ export function useApi() {
       },
 
       sources: () => authRequest<{ sources: Source[] }>('/api/sources').then((r) => r.sources),
+
+      budgets: {
+        get: (month: string) => authRequest<BudgetView>(`/api/budgets/${month}`),
+        save: (month: string, draft: BudgetDraft) => authRequest<{ budgetId: string }>(`/api/budgets/${month}`, { method: 'PUT', body: draft }),
+        copyPrevious: (month: string) => authRequest<{ copied: number }>(`/api/budgets/${month}/copy-previous`, { method: 'POST' }),
+        remove: (month: string) => authRequest<null>(`/api/budgets/${month}`, { method: 'DELETE' }),
+      },
+
+      profile: {
+        get: () => authRequest<{ profile: ProfileData }>('/api/profile').then((r) => r.profile),
+        update: (patch: Partial<{ displayName: string | null; monthlyBudgetTargetMinor: number | null; savingsTargetMinor: number | null; setupCompleted: true }>) =>
+          authRequest<{ profile: ProfileData }>('/api/profile', { method: 'PATCH', body: patch }).then((r) => r.profile),
+        setAiConsent: (granted: boolean) =>
+          authRequest<{ profile: ProfileData }>('/api/profile/ai-consent', { method: 'POST', body: { granted } }).then((r) => r.profile),
+        export: (format: 'csv' | 'json') => authRequest<Blob>(`/api/profile/export?format=${format}`, { responseType: 'blob' }),
+        deleteData: () => authRequest<null>('/api/profile/delete-data', { method: 'POST', body: { confirm: 'DELETE' } }),
+        deleteAccount: (password: string) =>
+          authRequest<null>('/api/profile/delete-account', { method: 'POST', body: { confirm: 'DELETE', password } }),
+      },
+
+      insights: {
+        get: (month: string) => authRequest<{ insights: Insights; ai: { available: boolean } }>(`/api/insights?month=${month}`),
+        explain: (month: string) => authRequest<AiAnswer>('/api/insights/explain', { method: 'POST', body: { month } }),
+        ask: (month: string, question: string) => authRequest<AiAnswer>('/api/ask', { method: 'POST', body: { month, question } }),
+        budgetSuggestions: (
+          month: string,
+          plan: { expectedIncomeMinor: number | null; savingsTargetMinor: number | null; limits: { name: string; limitMinor: number; averageMinor: number | null }[] },
+        ) => authRequest<AiAnswer>('/api/budget-suggestions', { method: 'POST', body: { month, plan } }),
+      },
 
       categories: () => authRequest<{ categories: Category[] }>('/api/categories').then((r) => r.categories),
 

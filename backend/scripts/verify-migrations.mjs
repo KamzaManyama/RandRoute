@@ -136,6 +136,21 @@ check("deleting auth user cascades everything",
   (await db.query(`select count(*)::int n from public.categories where user_id='${B}'`)).rows[0].n === 0 &&
   (await db.query(`select count(*)::int n from public.user_preferences where user_id='${B}'`)).rows[0].n === 0);
 
+// save_budget: atomic replace, RLS-safe
+const D = "44444444-4444-4444-4444-444444444444";
+await db.exec(`insert into auth.users (id, email) values ('${D}', 'd@x.co')`);
+const g = (await one(D, "select id from public.categories where key='groceries'")).id;
+const r = (await one(D, "select id from public.categories where key='housing'")).id;
+const b1 = (await one(D, `select public.save_budget('2026-09-01', 3000000, 200000, '[{"category_id":"${g}","limit_minor":300000},{"category_id":"${r}","limit_minor":850000}]'::jsonb) id`)).id;
+const b2 = (await one(D, `select public.save_budget('2026-09-01', null, null, '[{"category_id":"${g}","limit_minor":250000}]'::jsonb) id`)).id;
+const lim = await one(D, "select count(*)::int n, max(limit_minor)::int m from public.budget_category_limits");
+check("save_budget replaces the plan in place", b1 === b2 && lim.n === 1 && lim.m === 250000);
+check("save_budget rejects a bad month", await fails(D, `select public.save_budget('2026-09-15', null, null, '[]')`));
+check("save_budget rejects negative limits and keeps the old plan", (await fails(D, `select public.save_budget('2026-09-01', null, null, '[{"category_id":"${g}","limit_minor":-1}]')`)) &&
+  (await one(D, "select count(*)::int n from public.budget_category_limits")).n === 1);
+check("save_budget can't use another user's category", await fails(A, `select public.save_budget('2026-09-01', null, null, '[{"category_id":"${bCat}","limit_minor":1}]')`));
+check("anon can't call save_budget", await fails(null, "select public.save_budget('2026-09-01', null, null, '[]')"));
+
 // Account deletion with saved transactions (cascades through imports + transactions)
 const C = "33333333-3333-3333-3333-333333333333";
 await db.exec(`insert into auth.users (id, email) values ('${C}', 'c@x.co')`);

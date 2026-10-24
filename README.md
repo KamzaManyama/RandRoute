@@ -913,7 +913,9 @@ RandRoute/
 │       ├── 20261024000001_schema.sql            # tables, types, indexes
 │       ├── 20261024000002_rls.sql               # row-level security policies
 │       ├── 20261024000003_functions.sql         # sign-up trigger, confirm/cancel import, deletion
-│       └── 20261024000004_seed_categories.sql   # shared system categories
+│       ├── 20261024000004_seed_categories.sql   # shared system categories
+│       ├── 20261024000005_fix_count_trigger_cascade.sql  # lets accounts with transactions be deleted
+│       └── 20261024000006_budgets_and_account.sql        # save_budget (atomic budget save)
 ├── backend/                  # Express + TypeScript API (owns Supabase + Gemini)
 │   ├── src/
 │   │   ├── config/env.ts     # validates environment variables at startup
@@ -942,7 +944,7 @@ Do not add secrets or real bank statements to this repository.
 ### 1. Create the Supabase project
 
 1. Create a project at [supabase.com](https://supabase.com). Pick the region closest to South Africa that's available.
-2. Open **SQL Editor** and run each file in [`supabase/migrations/`](supabase/migrations/) **in filename order** (1 → 4). Each file runs on its own.
+2. Open **SQL Editor** and run each file in [`supabase/migrations/`](supabase/migrations/) **in filename order** (1 → 6). Each file runs on its own.
    - Or, with the Supabase CLI: `npx supabase link --project-ref <your-ref>` then `npx supabase db push`.
 3. **Authentication → Sign In / Providers → Email**: keep Email enabled and turn on **Confirm email**.
 4. **Authentication → URL Configuration**:
@@ -967,6 +969,7 @@ npm run dev                     # http://localhost:4000
 | `SUPABASE_PUBLISHABLE_KEY` | Project Settings → API Keys → publishable key (`sb_publishable_...`) |
 | `SUPABASE_SECRET_KEY` | Project Settings → API Keys → secret key (`sb_secret_...`). **Server only.** |
 | `GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/apikey). Leave `AI_ENABLED=false` until the provider terms are reviewed. |
+| `GEMINI_MODEL` | Defaults to `gemini-3.8-flash` (older models such as `gemini-2.5-flash` are closed to new keys). |
 
 Check the setup:
 
@@ -991,7 +994,9 @@ In development, Vite forwards `/api` requests to the backend, so the frontend ne
 | `cd backend && npm run test:db` | Applies all migrations to an in-memory Postgres and checks RLS, import confirmation, duplicates, and deletion |
 | `cd frontend && npm test` | Sign-in/register/forgot password, side navigation, Statements upload → review → import |
 
-### Sample statements
+### Sample statements and demo account
+
+`cd backend && npm run demo` (with the backend running) creates or resets **kmanyama009+demo@gmail.com** with six months of synthetic statements and prints a new password.
 
 `cd backend && npm run fixtures` writes two synthetic statements (FNB-style and Capitec-style, made-up data) to `backend/fixtures/`. Upload them on the Statements screen to try the full import flow. PDFs are git-ignored.
 

@@ -1,66 +1,214 @@
-import { PageHeader, Stat, Stats } from '../components/ui'
+import { useEffect, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { useApi, type AiAnswer, type Insights } from '../lib/useApi'
+import { ApiError } from '../lib/api'
+import { currentMonth, isMonth, money, monthLabel } from '../lib/format'
+import { EmptyState, MonthPicker, PageHeader, Stat, Stats } from '../components/ui'
+import { FormAlert } from '../components/forms'
+import { AiAnswerCard, AiConsentPanel, AiUnavailableNote } from '../components/ai'
+import { useProfile } from '../auth/profileContext'
 
-// Sample content until Insights is connected (Roadmap phases 5–6).
-const trends = [
-  { name: 'Groceries', change: '+12%', detail: 'Higher weekly food costs this month', tone: 'negative' },
-  { name: 'Transport & fuel', change: '+8%', detail: 'More fuel and commute days', tone: 'negative' },
-  { name: 'Eating out & takeaways', change: '−5%', detail: 'Fewer takeaways than last month', tone: 'positive' },
-  { name: 'Medical & pharmacy', change: '+2%', detail: 'Routine costs stayed steady', tone: '' },
-]
+type AiState =
+  | { state: 'idle' }
+  | { state: 'consent' }
+  | { state: 'loading' }
+  | { state: 'done'; answer: AiAnswer }
+  | { state: 'error'; message: string }
 
-/** Screen 14 — Monthly insights (preview). Opening this page never calls AI. */
+const pct = (n: number | null) => (n === null ? null : `${n > 0 ? '+' : n < 0 ? '−' : ''}${Math.abs(n)}%`)
+
+/** Screen 14 — Monthly insights. Opening this page never calls AI. */
 export function InsightsPage() {
+  const api = useApi()
+  const { profile } = useProfile()
+  const [params, setParams] = useSearchParams()
+  const month = isMonth(params.get('month')) ? params.get('month')! : currentMonth()
+
+  const [loaded, setLoaded] = useState<{ month: string; data: Insights | null; error: string | null } | null>(null)
+  const [ai, setAi] = useState<{ month: string } & AiState>({ month, state: 'idle' })
+
+  useEffect(() => {
+    let cancelled = false
+    api.insights
+      .get(month)
+      .then((r) => !cancelled && setLoaded({ month, data: r.insights, error: null }))
+      .catch((err: unknown) => !cancelled && setLoaded({ month, data: null, error: err instanceof ApiError ? err.message : 'We could not load your insights.' }))
+    return () => {
+      cancelled = true
+    }
+  }, [api, month])
+
+  const loading = loaded?.month !== month
+  const ins = loading ? null : loaded.data
+  const aiState: AiState = ai.month === month ? ai : { state: 'idle' }
+  const aiAvailable = Boolean(profile?.ai.available)
+
+  /** `justConsented` skips the check right after the user agrees (profile state may not have updated yet). */
+  async function explain(justConsented = false) {
+    if (!justConsented && profile?.ai.consent !== 'granted') {
+      setAi({ month, state: 'consent' })
+      return
+    }
+    setAi({ month, state: 'loading' })
+    try {
+      setAi({ month, state: 'done', answer: await api.insights.explain(month) })
+    } catch (err) {
+      setAi({ month, state: 'error', message: err instanceof ApiError ? err.message : 'AI explanations are unavailable right now.' })
+    }
+  }
+
   return (
     <div className="page">
       <PageHeader
-        eyebrow="Trend overview"
+        eyebrow="What changed and why"
         title="Insights"
         actions={
-          <button type="button" className="button" disabled>
-            Explain this trend
-          </button>
+          <>
+            <MonthPicker month={month} max={currentMonth()} onChange={(m) => setParams({ month: m }, { replace: true })} />
+            <Link to={`/insights/ask?month=${month}`} className="button button--ghost">
+              Ask a question
+            </Link>
+          </>
         }
       />
 
-      <p className="preview-banner" role="note">
-        Preview with sample numbers — this page isn&apos;t connected to your statements yet.
-      </p>
+      {!loading && loaded.error && <FormAlert>{loaded.error}</FormAlert>}
+      {loading && <p className="muted" role="status">Working out your insights…</p>}
 
-      <Stats label="Insight summary">
-        <Stat label="Spending change" value="+6.2%" tone="negative" />
-        <Stat label="Top category" value="Rent & bond" />
-        <Stat label="Budget status" value="2 over" tone="negative" />
-        <Stat label="Coverage" value="Partial month" tone="warn" />
-      </Stats>
+      {ins && !ins.coverage.hasImports && ins.topCategories.length === 0 ? (
+        <EmptyState
+          title={`No data for ${monthLabel(month)}`}
+          action={
+            <Link to="/statements/upload" className="button">
+              Upload a statement
+            </Link>
+          }
+        >
+          Insights appear once you&apos;ve imported a statement covering this month.
+        </EmptyState>
+      ) : (
+        ins && (
+          <>
+            <Stats label={`Insights for ${monthLabel(month)}`}>
+              <Stat
+                label="Money out"
+                value={money(ins.totals.moneyOutMinor)}
+                hint={ins.comparison.available ? `${pct(ins.totals.moneyOutChangePercent) ?? '—'} vs ${monthLabel(ins.comparison.month)}` : 'No comparison'}
+              />
+              <Stat label="Money in" value={money(ins.totals.moneyInMinor)} />
+              <Stat label="Top category" value={ins.topCategories[0]?.name ?? '—'} hint={ins.topCategories[0] ? money(ins.topCategories[0].totalMinor) : undefined} />
+              <Stat
+                label="Budget"
+                value={ins.budget.hasBudget ? (ins.budget.overCount ? `${ins.budget.overCount} over` : 'On track') : 'No budget'}
+                tone={ins.budget.overCount ? 'negative' : undefined}
+              />
+            </Stats>
 
-      <div className="columns">
-        <section className="card">
-          <h2 className="section-title">Spending changes</h2>
-          <ul className="list">
-            {trends.map((t) => (
-              <li key={t.name} className="list-row">
-                <span className="list-row__main">
-                  <span className="list-row__title">{t.name}</span>
-                  <span className="list-row__meta">{t.detail}</span>
-                </span>
-                <span className={`list-row__value ${t.tone}`}>{t.change}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
+            {ins.limitations.length > 0 && (
+              <section className="preview-banner" aria-label="Limitations">
+                <strong>Keep in mind:</strong>
+                <ul className="ai-policy">
+                  {ins.limitations.map((l) => (
+                    <li key={l}>{l}</li>
+                  ))}
+                </ul>
+              </section>
+            )}
 
-        <section className="card stack">
-          <h2 className="section-title">What this means</h2>
-          <p className="muted">
-            Spending rose mainly because food and transport cost more. This view reflects partial statement coverage, so
-            treat it as a working summary.
-          </p>
-          <p className="preview-banner">
-            <strong>About AI:</strong> RandRoute only asks Gemini for an explanation when you press &ldquo;Explain this
-            trend&rdquo; — never just by opening this page.
-          </p>
-        </section>
-      </div>
+            <section className="card stack">
+              <div className="card__header card__header--flush">
+                <h2 className="section-title">Explain this month</h2>
+                {aiAvailable && (
+                  <button type="button" className="button" onClick={() => explain()} disabled={aiState.state === 'loading'}>
+                    {aiState.state === 'loading' ? 'Thinking…' : 'Explain with AI'}
+                  </button>
+                )}
+              </div>
+              {aiAvailable ? (
+                <p className="muted small">Only runs when you press the button. Uses the figures on this page — nothing else.</p>
+              ) : (
+                <AiUnavailableNote />
+              )}
+            </section>
+            {aiState.state === 'consent' && <AiConsentPanel onDone={(granted) => (granted ? void explain(true) : setAi({ month, state: 'idle' }))} />}
+            {aiState.state === 'error' && <FormAlert>{aiState.message}</FormAlert>}
+            {aiState.state === 'done' && <AiAnswerCard answer={aiState.answer} title={`About ${monthLabel(month)}`} />}
+
+            <div className="columns">
+              <section className="card">
+                <h2 className="section-title">Biggest changes</h2>
+                {!ins.comparison.available ? (
+                  <p className="muted">{ins.comparison.reason} Changes appear once both months are complete.</p>
+                ) : ins.changes.length === 0 ? (
+                  <p className="muted">Spending by category was the same as last month.</p>
+                ) : (
+                  <ul className="list">
+                    {ins.changes.map((c) => (
+                      <li key={c.categoryId ?? 'none'}>
+                        <Link to={`/spending?month=${month}&category=${c.categoryId ?? 'none'}`} className="list-row">
+                          <span className="list-row__main">
+                            <span className="list-row__title">{c.name}</span>
+                            <span className="list-row__meta">
+                              {money(c.totalMinor)} this month · {money(c.previousMinor)} in {monthLabel(ins.comparison.month)}
+                            </span>
+                          </span>
+                          <span className={`list-row__value ${c.changeMinor > 0 ? 'negative' : 'positive'}`}>
+                            {c.changeMinor > 0 ? '+' : '−'}
+                            {money(Math.abs(c.changeMinor))}
+                            <small>{c.changePercent === null ? 'new' : pct(c.changePercent)}</small>
+                          </span>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+
+              <div className="page">
+                <section className="card">
+                  <h2 className="section-title">Unusual spending</h2>
+                  {!ins.unusualCheck.available ? (
+                    <p className="muted">{ins.unusualCheck.reason}</p>
+                  ) : ins.unusual.length === 0 ? (
+                    <p className="muted">
+                      Nothing unusual compared with your last {ins.unusualCheck.historyMonths} complete months.
+                    </p>
+                  ) : (
+                    <ul className="list">
+                      {ins.unusual.map((u) => (
+                        <li key={u.categoryId ?? 'none'} className="list-row">
+                          <span className="list-row__main">
+                            <span className="list-row__title">{u.name}</span>
+                            <span className="list-row__meta">Usually about {money(u.averageMinor)} a month</span>
+                          </span>
+                          <span className="list-row__value negative">{money(u.totalMinor)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+
+                <section className="card">
+                  <h2 className="section-title">Top categories</h2>
+                  <ul className="list">
+                    {ins.topCategories.map((c) => (
+                      <li key={c.categoryId ?? 'none'} className="list-row">
+                        <span className="list-row__main">
+                          <span className="list-row__title">{c.name}</span>
+                          <span className="list-row__meta">
+                            {c.count} transaction{c.count === 1 ? '' : 's'}
+                          </span>
+                        </span>
+                        <span className="list-row__value">{money(c.totalMinor)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              </div>
+            </div>
+          </>
+        )
+      )}
     </div>
   )
 }
