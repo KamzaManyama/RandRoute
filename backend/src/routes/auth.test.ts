@@ -67,7 +67,7 @@ describe("cross-site protection", () => {
 
 describe("POST /register", () => {
   it("validates input with per-field messages", async () => {
-    const res = await post("/register", { email: "not-an-email", password: "short" });
+    const res = await post("/register", { email: "not-an-email", password: "short", acceptedPolicies: true });
     expect(res.status).toBe(400);
     expect(res.body.error.fields).toEqual({
       email: "Enter a valid email address.",
@@ -76,34 +76,44 @@ describe("POST /register", () => {
     expect(auth.signUp).not.toHaveBeenCalled();
   });
 
+  it("requires agreeing to the policies", async () => {
+    const res = await post("/register", { email: USER.email, password: "Passw0rd!" });
+    expect(res.status).toBe(400);
+    expect(res.body.error.fields.acceptedPolicies).toMatch(/privacy, data retention and cookie policies/);
+    expect(auth.signUp).not.toHaveBeenCalled();
+  });
+
   it("requires a letter and a number in the password", async () => {
-    const res = await post("/register", { email: USER.email, password: "onlyletters" });
+    const res = await post("/register", { email: USER.email, password: "onlyletters", acceptedPolicies: true });
     expect(res.body.error.fields.password).toMatch(/letter and one number/);
   });
 
   it("asks the user to verify their email, normalising the address", async () => {
     auth.signUp.mockResolvedValue({ data: { user: USER, session: null }, error: null });
-    const res = await post("/register", { email: "  Maredi@Example.com ", password: "Passw0rd!", displayName: "Maredi" });
+    const res = await post("/register", { email: "  Maredi@Example.com ", password: "Passw0rd!", displayName: "Maredi", acceptedPolicies: true });
     expect(res.status).toBe(202);
     expect(res.body.status).toBe("verification_required");
     expect(auth.signUp).toHaveBeenCalledWith(
       expect.objectContaining({
         email: "maredi@example.com",
-        options: expect.objectContaining({ data: { display_name: "Maredi" }, emailRedirectTo: config.supabase.authRedirectUrl }),
+        options: expect.objectContaining({
+          data: expect.objectContaining({ display_name: "Maredi", policies_version: "2026-10-24" }),
+          emailRedirectTo: config.supabase.authRedirectUrl,
+        }),
       }),
     );
   });
 
   it("gives the same answer when the email is already registered", async () => {
     auth.signUp.mockResolvedValue({ data: { user: null, session: null }, error: authError("user_already_exists", 422) });
-    const res = await post("/register", { email: USER.email, password: "Passw0rd!" });
+    const res = await post("/register", { email: USER.email, password: "Passw0rd!", acceptedPolicies: true });
     expect(res.status).toBe(202);
     expect(res.body.status).toBe("verification_required");
   });
 
   it("signs in immediately when email confirmation is off", async () => {
     auth.signUp.mockResolvedValue({ data: { user: USER, session: session() }, error: null });
-    const res = await post("/register", { email: USER.email, password: "Passw0rd!" });
+    const res = await post("/register", { email: USER.email, password: "Passw0rd!", acceptedPolicies: true });
     expect(res.status).toBe(201);
     expect(res.body.session.accessToken).toBe("access-1");
     expect(refreshCookie(res)).toBeDefined();
@@ -113,7 +123,7 @@ describe("POST /register", () => {
 describe("POST /login", () => {
   it("returns an access token and sets an httpOnly refresh cookie", async () => {
     auth.signInWithPassword.mockResolvedValue({ data: { session: session() }, error: null });
-    const res = await post("/login", { email: USER.email, password: "Passw0rd!" });
+    const res = await post("/login", { email: USER.email, password: "Passw0rd!", acceptedPolicies: true });
     expect(res.status).toBe(200);
     expect(res.body.session).toEqual({
       accessToken: "access-1",
@@ -136,14 +146,14 @@ describe("POST /login", () => {
 
   it("tells unverified users to check their email", async () => {
     auth.signInWithPassword.mockResolvedValue({ data: { session: null }, error: authError("email_not_confirmed") });
-    const res = await post("/login", { email: USER.email, password: "Passw0rd!" });
+    const res = await post("/login", { email: USER.email, password: "Passw0rd!", acceptedPolicies: true });
     expect(res.status).toBe(403);
     expect(res.body.error.code).toBe("email_not_confirmed");
   });
 
   it("passes on Supabase rate limits as 429", async () => {
     auth.signInWithPassword.mockResolvedValue({ data: { session: null }, error: authError("over_request_rate_limit", 429) });
-    const res = await post("/login", { email: USER.email, password: "Passw0rd!" });
+    const res = await post("/login", { email: USER.email, password: "Passw0rd!", acceptedPolicies: true });
     expect(res.status).toBe(429);
   });
 });

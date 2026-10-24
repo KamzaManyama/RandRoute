@@ -40,7 +40,13 @@ const registerSchema = z.object({
     .max(60, "Use 60 characters or fewer.")
     .optional()
     .transform((value) => (value ? value : undefined)),
+  acceptedPolicies: z.literal(true, {
+    error: "Please confirm you've read the privacy, data retention and cookie policies.",
+  }),
 });
+
+/** Bump when the Privacy, Data Retention or Cookie policy changes meaningfully. */
+export const POLICIES_VERSION = "2026-10-24";
 const loginSchema = z.object({
   email,
   password: z.string({ error: "Enter your password." }).min(1, "Enter your password.").max(200),
@@ -157,7 +163,12 @@ export function authRouter({ config, supabase }: { config: AppConfig; supabase: 
       password: body.password,
       options: {
         emailRedirectTo: config.supabase.authRedirectUrl,
-        data: body.displayName ? { display_name: body.displayName } : {},
+        data: {
+          ...(body.displayName ? { display_name: body.displayName } : {}),
+          // Record which version of the policies they agreed to, and when.
+          policies_version: POLICIES_VERSION,
+          policies_accepted_at: new Date().toISOString(),
+        },
       },
     });
 

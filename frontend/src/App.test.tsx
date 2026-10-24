@@ -8,7 +8,7 @@ describe('signed out', () => {
   it('sends visitors to the Welcome screen', async () => {
     fakeBackend(signedOutRoutes)
     renderApp('/')
-    expect(await screen.findByRole('heading', { name: /see where your money goes/i })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Welcome to RandRoute' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Create account' })).toBeInTheDocument()
   })
 
@@ -65,6 +65,9 @@ describe('signed out', () => {
     await userEvent.type(screen.getByLabelText('Password'), 'Passw0rd1')
     await userEvent.type(screen.getByLabelText('Confirm password'), 'Passw0rd1')
     await userEvent.click(screen.getByRole('button', { name: 'Create account' }))
+    expect(await screen.findByText(/confirm you.ve read the privacy, data retention and cookie policies/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('checkbox'))
+    await userEvent.click(screen.getByRole('button', { name: 'Create account' }))
     expect(await screen.findByRole('heading', { name: 'Check your email' })).toBeInTheDocument()
     expect(screen.getByText('new@example.com')).toBeInTheDocument()
   })
@@ -78,6 +81,29 @@ describe('signed out', () => {
     await userEvent.type(await screen.findByLabelText('Email'), 'anyone@example.com')
     await userEvent.click(screen.getByRole('button', { name: 'Send reset link' }))
     expect(await screen.findByText(/If an account exists/)).toBeInTheDocument()
+  })
+})
+
+describe('policies', () => {
+  it('sign-in screens link to all three policies', async () => {
+    fakeBackend(signedOutRoutes)
+    renderApp('/sign-in')
+    const nav = await screen.findByRole('navigation', { name: 'Policies' })
+    expect(within(nav).getByRole('link', { name: 'Privacy policy' })).toHaveAttribute('href', '/privacy')
+    expect(within(nav).getByRole('link', { name: 'Data retention' })).toHaveAttribute('href', '/data-retention')
+    expect(within(nav).getByRole('link', { name: 'Cookies' })).toHaveAttribute('href', '/cookies')
+    expect(screen.queryByText(/google|facebook/i)).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['/privacy', 'Privacy policy', /never stored/],
+    ['/data-retention', 'Data retention policy', /Statement PDFs are never stored/],
+    ['/cookies', 'Cookie policy', /rr_refresh/],
+  ])('%s opens without signing in', async (path, heading, text) => {
+    fakeBackend(signedOutRoutes)
+    renderApp(path)
+    expect(await screen.findByRole('heading', { level: 1, name: heading })).toBeInTheDocument()
+    expect(screen.getAllByText(text).length).toBeGreaterThan(0)
   })
 })
 
@@ -108,7 +134,7 @@ describe('side navigation', () => {
     const { calls } = fakeBackend(signedInRoutes)
     renderApp('/')
     await userEvent.click(await screen.findByRole('button', { name: /log out|sign out/i }))
-    expect(await screen.findByRole('heading', { name: /see where your money goes/i })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Welcome to RandRoute' })).toBeInTheDocument()
     expect(calls.some((c) => c.path === '/api/auth/logout')).toBe(true)
   })
 })

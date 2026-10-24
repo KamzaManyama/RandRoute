@@ -18,8 +18,11 @@ import { BudgetPage } from './pages/BudgetPage'
 import { InsightsPage } from './pages/InsightsPage'
 import { ProfilePage } from './pages/ProfilePage'
 import { BudgetPlanPage } from './pages/BudgetPlanPage'
-import { AskPage } from './pages/AskPage'
 import { SetupPage } from './pages/SetupPage'
+import { ExplainPage } from './pages/ExplainPage'
+import { PrivacyPage } from './pages/legal/PrivacyPage'
+import { DataRetentionPage } from './pages/legal/DataRetentionPage'
+import { CookiesPage } from './pages/legal/CookiesPage'
 import { ProfileProvider, SetupGate } from './auth/ProfileProvider'
 
 export default function App() {
@@ -35,6 +38,11 @@ export default function App() {
       <Route path="reset-password" element={<ResetPasswordPage />} />
       <Route path="auth/callback" element={<AuthCallbackPage />} />
 
+      {/* Policies: open to everyone, signed in or not */}
+      <Route path="privacy" element={<PrivacyPage />} />
+      <Route path="data-retention" element={<DataRetentionPage />} />
+      <Route path="cookies" element={<CookiesPage />} />
+
       {/* Signed-in: profile loads once; new users go through setup first */}
       <Route element={<RequireAuth><ProfileProvider /></RequireAuth>}>
         <Route path="setup" element={<SetupPage />} />
@@ -48,7 +56,7 @@ export default function App() {
           <Route path="budget" element={<BudgetPage />} />
           <Route path="budget/plan" element={<BudgetPlanPage />} />
           <Route path="insights" element={<InsightsPage />} />
-          <Route path="insights/ask" element={<AskPage />} />
+          <Route path="insights/explain" element={<ExplainPage />} />
           <Route path="profile" element={<ProfilePage />} />
           <Route path="*" element={<ComingSoonPage title="Page not found" description="That page does not exist." />} />
         </Route>

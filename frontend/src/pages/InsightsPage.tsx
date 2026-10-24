@@ -1,19 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { useApi, type AiAnswer, type Insights } from '../lib/useApi'
+import { useApi, type Insights } from '../lib/useApi'
 import { ApiError } from '../lib/api'
 import { currentMonth, isMonth, money, monthLabel } from '../lib/format'
 import { EmptyState, MonthPicker, PageHeader, Stat, Stats } from '../components/ui'
 import { FormAlert } from '../components/forms'
-import { AiAnswerCard, AiConsentPanel, AiUnavailableNote } from '../components/ai'
+import { AiUnavailableNote } from '../components/ai'
 import { useProfile } from '../auth/profileContext'
-
-type AiState =
-  | { state: 'idle' }
-  | { state: 'consent' }
-  | { state: 'loading' }
-  | { state: 'done'; answer: AiAnswer }
-  | { state: 'error'; message: string }
 
 const pct = (n: number | null) => (n === null ? null : `${n > 0 ? '+' : n < 0 ? '−' : ''}${Math.abs(n)}%`)
 
@@ -25,7 +18,6 @@ export function InsightsPage() {
   const month = isMonth(params.get('month')) ? params.get('month')! : currentMonth()
 
   const [loaded, setLoaded] = useState<{ month: string; data: Insights | null; error: string | null } | null>(null)
-  const [ai, setAi] = useState<{ month: string } & AiState>({ month, state: 'idle' })
 
   useEffect(() => {
     let cancelled = false
@@ -40,22 +32,7 @@ export function InsightsPage() {
 
   const loading = loaded?.month !== month
   const ins = loading ? null : loaded.data
-  const aiState: AiState = ai.month === month ? ai : { state: 'idle' }
   const aiAvailable = Boolean(profile?.ai.available)
-
-  /** `justConsented` skips the check right after the user agrees (profile state may not have updated yet). */
-  async function explain(justConsented = false) {
-    if (!justConsented && profile?.ai.consent !== 'granted') {
-      setAi({ month, state: 'consent' })
-      return
-    }
-    setAi({ month, state: 'loading' })
-    try {
-      setAi({ month, state: 'done', answer: await api.insights.explain(month) })
-    } catch (err) {
-      setAi({ month, state: 'error', message: err instanceof ApiError ? err.message : 'AI explanations are unavailable right now.' })
-    }
-  }
 
   return (
     <div className="page">
@@ -65,9 +42,11 @@ export function InsightsPage() {
         actions={
           <>
             <MonthPicker month={month} max={currentMonth()} onChange={(m) => setParams({ month: m }, { replace: true })} />
-            <Link to={`/insights/ask?month=${month}`} className="button button--ghost">
-              Ask a question
-            </Link>
+            {aiAvailable && ins && (ins.coverage.hasImports || ins.topCategories.length > 0) && (
+              <Link to={`/insights/explain?month=${month}`} state={{ start: true }} className="button">
+                Explain my spending
+              </Link>
+            )}
           </>
         }
       />
@@ -95,7 +74,7 @@ export function InsightsPage() {
                 value={money(ins.totals.moneyOutMinor)}
                 hint={ins.comparison.available ? `${pct(ins.totals.moneyOutChangePercent) ?? '—'} vs ${monthLabel(ins.comparison.month)}` : 'No comparison'}
               />
-              <Stat label="Money in" value={money(ins.totals.moneyInMinor)} />
+              <Stat label="Money in" value={money(ins.totals.moneyInMinor)} tone="positive" />
               <Stat label="Top category" value={ins.topCategories[0]?.name ?? '—'} hint={ins.topCategories[0] ? money(ins.topCategories[0].totalMinor) : undefined} />
               <Stat
                 label="Budget"
@@ -115,24 +94,13 @@ export function InsightsPage() {
               </section>
             )}
 
-            <section className="card stack">
-              <div className="card__header card__header--flush">
-                <h2 className="section-title">Explain this month</h2>
-                {aiAvailable && (
-                  <button type="button" className="button" onClick={() => explain()} disabled={aiState.state === 'loading'}>
-                    {aiState.state === 'loading' ? 'Thinking…' : 'Explain with AI'}
-                  </button>
-                )}
-              </div>
-              {aiAvailable ? (
-                <p className="muted small">Only runs when you press the button. Uses the figures on this page — nothing else.</p>
-              ) : (
-                <AiUnavailableNote />
-              )}
-            </section>
-            {aiState.state === 'consent' && <AiConsentPanel onDone={(granted) => (granted ? void explain(true) : setAi({ month, state: 'idle' }))} />}
-            {aiState.state === 'error' && <FormAlert>{aiState.message}</FormAlert>}
-            {aiState.state === 'done' && <AiAnswerCard answer={aiState.answer} title={`About ${monthLabel(month)}`} />}
+            {!aiAvailable && <AiUnavailableNote />}
+            {aiAvailable && (
+              <p className="muted small">
+                Press <strong>Explain my spending</strong> for a plain-language summary of this month and practical ways to
+                save. It only uses the figures on this page.
+              </p>
+            )}
 
             <div className="columns">
               <section className="card">

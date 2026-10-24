@@ -74,7 +74,7 @@ describe('Statements overview', () => {
     expect(await screen.findByText('Needs review', { selector: '.status-badge' })).toBeInTheDocument()
     expect(screen.getByText('4 saved transactions')).toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('button', { name: 'Imported' }))
+    await userEvent.selectOptions(screen.getByLabelText('Show'), 'imported')
     expect(screen.queryByText('FNB')).not.toBeInTheDocument()
     expect(screen.getByText('Capitec')).toBeInTheDocument()
   })
@@ -180,7 +180,7 @@ describe('Review and import', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /duplicate — skip it/ }))
     expect(screen.getByRole('button', { name: /Import 0 transactions/ })).toBeDisabled()
-    await userEvent.click(screen.getByRole('button', { name: /^Excluded/ }))
+    await userEvent.selectOptions(screen.getByLabelText('Show'), 'excluded')
     const excludedRow = screen.getByText('Checkers Sandton', { selector: '.review-row__text strong' }).closest('li')!
     expect(excludedRow).toHaveClass('review-row--excluded')
     expect(within(excludedRow).getByRole('button', { name: /duplicate — skip it/ })).toHaveAttribute('aria-pressed', 'true')

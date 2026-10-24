@@ -93,7 +93,7 @@ describe('Spending overview', () => {
   it('searches all of history, not only the current month', async () => {
     const { calls } = spendingBackend()
     renderApp('/spending?month=2026-09')
-    await userEvent.click(await screen.findByRole('button', { name: 'All time' }))
+    await userEvent.selectOptions(await screen.findByLabelText('Period'), 'all')
     await userEvent.type(screen.getByLabelText('Search transactions'), 'rent')
     await waitFor(() => expect(calls.some((c) => c.path === '/api/transactions' && c.query.get('q') === 'rent')).toBe(true))
     const search = calls.filter((c) => c.path === '/api/transactions' && c.query.get('q') === 'rent').at(-1)!

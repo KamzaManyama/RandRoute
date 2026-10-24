@@ -116,7 +116,7 @@ export const api = {
   health: (signal?: AbortSignal) => apiRequest<HealthResponse>('/api/health', { signal }),
 
   auth: {
-    register: (body: { email: string; password: string; displayName?: string }) =>
+    register: (body: { email: string; password: string; displayName?: string; acceptedPolicies: true }) =>
       apiRequest<RegisterResult>('/api/auth/register', { method: 'POST', body }),
     login: (body: { email: string; password: string }) =>
       apiRequest<{ session: Session }>('/api/auth/login', { method: 'POST', body }),
@@ -136,4 +136,65 @@ export const api = {
       }),
     me: (token: string) => apiRequest<{ user: Profile }>('/api/auth/me', { token }),
   },
+}
+
+export type StreamEvent = { event: string; data: unknown }
+
+/**
+ * POSTs JSON and reads a Server-Sent Events response, calling `onEvent` for
+ * each event as it arrives. Errors before the stream starts (e.g. consent
+ * required) come back as a normal ApiError.
+ */
+export async function streamRequest(
+  path: string,
+  options: { body: unknown; token?: string | null; signal?: AbortSignal; onEvent: (e: StreamEvent) => void },
+): Promise<void> {
+  let response: Response
+  try {
+    response = await fetch(`${BASE_URL}${path}`, {
+      method: 'POST',
+      headers: {
+        Accept: 'text/event-stream',
+        'Content-Type': 'application/json',
+        'X-RandRoute-Client': 'web',
+        ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
+      },
+      body: JSON.stringify(options.body),
+      signal: options.signal,
+      credentials: 'include',
+    })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error
+    throw new ApiError(0, 'network_error', 'Cannot reach RandRoute right now. Check your connection and try again.')
+  }
+
+  if (!response.ok || !(response.headers.get('content-type') ?? '').includes('text/event-stream') || !response.body) {
+    const data = (await response.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null
+    throw new ApiError(response.status, data?.error?.code ?? 'http_error', data?.error?.message ?? 'Something went wrong. Please try again.')
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    let end: number
+    while ((end = buffer.indexOf('\n\n')) >= 0) {
+      const block = buffer.slice(0, end)
+      buffer = buffer.slice(end + 2)
+      let event = 'message'
+      let data = ''
+      for (const line of block.split('\n')) {
+        if (line.startsWith('event:')) event = line.slice(6).trim()
+        else if (line.startsWith('data:')) data += line.slice(5).trim()
+      }
+      try {
+        options.onEvent({ event, data: data ? JSON.parse(data) : null })
+      } catch {
+        // ignore malformed events
+      }
+    }
+  }
 }

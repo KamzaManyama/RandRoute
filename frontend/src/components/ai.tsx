@@ -60,8 +60,14 @@ export function AiConsentPanel({ onDone }: { onDone?: (granted: boolean) => void
   )
 }
 
-/** Renders AI text simply: paragraphs, and "- " / "* " lines as a list. No HTML is ever injected. */
-function AiText({ text }: { text: string }) {
+/** Section headings the explanation is asked to use (see backend EXPLAIN_TASK). */
+const SECTION_HEADINGS = ['where your money went', 'what changed', 'how you could improve', 'how you could save', 'smart money habits']
+
+/**
+ * Renders AI text as plain React elements — no HTML is ever injected.
+ * Known section headings become headings, "- " / "* " lines become lists, the rest paragraphs.
+ */
+export function AiText({ text }: { text: string }) {
   const blocks: ReactNode[] = []
   let list: string[] = []
   const flush = () => {
@@ -69,11 +75,24 @@ function AiText({ text }: { text: string }) {
     list = []
   }
   for (const raw of text.split('\n')) {
-    const line = raw.trim().replace(/\*\*(.+?)\*\*/g, '$1')
-    if (/^[-*•]\s+/.test(line)) list.push(line.replace(/^[-*•]\s+/, ''))
-    else {
-      flush()
-      if (line) blocks.push(<p key={`p${blocks.length}`}>{line}</p>)
+    const line = raw
+      .trim()
+      .replace(/^#+\s*/, '')
+      .replace(/\*\*(.+?)\*\*/g, '$1')
+    if (/^[-*•]\s+/.test(line)) {
+      list.push(line.replace(/^[-*•]\s+/, ''))
+      continue
+    }
+    flush()
+    if (!line) continue
+    if (SECTION_HEADINGS.includes(line.replace(/[:.]$/, '').toLowerCase())) {
+      blocks.push(
+        <h3 key={`h${blocks.length}`} className="ai-text__heading">
+          {line.replace(/[:.]$/, '')}
+        </h3>,
+      )
+    } else {
+      blocks.push(<p key={`p${blocks.length}`}>{line}</p>)
     }
   }
   flush()
@@ -88,16 +107,11 @@ export function AiAnswerCard({ answer, title = 'AI explanation' }: { answer: AiA
         <h2 className="section-title">{title}</h2>
         <span className="status-badge status--muted">Written by AI</span>
       </div>
-      {answer.question && <p className="ai-answer__question">“{answer.question}”</p>}
       <AiText text={answer.text} />
       <p className="muted small">
-        Based only on the figures RandRoute calculated. General guidance, not financial advice — check it against your
-        numbers.
+        Based only on the figures RandRoute calculated. Only category totals were shared with the AI — never your
+        transaction descriptions, account numbers or personal details. General guidance, not financial advice.
       </p>
-      <details className="ai-answer__shared">
-        <summary>What was shared with the AI</summary>
-        <pre>{JSON.stringify(answer.basedOn, null, 2)}</pre>
-      </details>
     </section>
   )
 }
@@ -105,11 +119,19 @@ export function AiAnswerCard({ answer, title = 'AI explanation' }: { answer: AiA
 /** Explains why an AI button isn't available. */
 export function AiUnavailableNote() {
   return (
-    <p className="muted small">
-      AI explanations are switched off on this server. All figures still work.{' '}
-      <Link to="/profile" className="text-link">
-        Learn more
-      </Link>
-    </p>
+    <div className="alert alert--info" role="status">
+      <strong>AI answers are turned off right now.</strong>
+      <span>
+        Questions can&apos;t be answered until AI is switched on. All your figures still work.{' '}
+        <Link to="/profile" className="text-link">
+          About AI in RandRoute
+        </Link>
+      </span>
+      {import.meta.env.DEV && (
+        <span className="small">
+          Developer: set <code>AI_ENABLED=true</code> in <code>backend/.env</code> and restart the backend.
+        </span>
+      )}
+    </div>
   )
 }

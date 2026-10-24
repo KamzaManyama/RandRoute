@@ -90,7 +90,15 @@ export function parseStatement(
     .map((l) => l.text)
     .join("\n");
 
-  const detectedBank = detectBank(headText);
+  // Classify lines so bank names inside transactions ("Payment to Capitec") don't count.
+  let firstTransactionSeen = false;
+  const classified = lines.map((line) => {
+    const texts = line.cells.map((c) => c.text);
+    const isTransaction = Boolean(leadingDate(texts)) && texts.some((t) => parseAmount(t) !== null);
+    if (isTransaction) firstTransactionSeen = true;
+    return { text: line.text, isTransaction, isHeader: line.page === 1 && !firstTransactionSeen };
+  });
+  const detectedBank = detectBank(classified);
   const bankKey = options.bankKey && options.bankKey !== "auto" ? options.bankKey : (detectedBank ?? "generic");
   const statementPeriod = findPeriod(headText);
   const warnings: string[] = [];

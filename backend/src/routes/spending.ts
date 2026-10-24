@@ -178,26 +178,48 @@ export function spendingRouter(supabase: SupabaseClients): Router {
   /** Search and filter saved transactions — the whole history, or one month. */
   router.get("/transactions", auth, async (req, res) => {
     const q = parse(listQuery, req.query);
-    let query = req
-      .auth!.db.from("transactions")
-      .select(LIST_COLUMNS, { count: "exact" })
-      .order("transaction_date", { ascending: false })
-      .order("created_at", { ascending: false })
-      .range(q.offset, q.offset + q.limit - 1);
-
-    if (q.month) {
-      if (!isMonth(q.month)) throw new HttpError(400, "validation_error", "Choose a valid month.", { month: "Use YYYY-MM." });
-      const { start, end } = monthRange(q.month);
-      query = query.gte("transaction_date", start).lt("transaction_date", end);
+    if (q.month && !isMonth(q.month)) {
+      throw new HttpError(400, "validation_error", "Choose a valid month.", { month: "Use YYYY-MM." });
     }
-    if (q.q) query = query.ilike("cleaned_description", likePattern(q.q));
-    if (q.categoryId === "none") query = query.is("category_id", null);
-    else if (q.categoryId) query = query.eq("category_id", q.categoryId);
-    if (q.type) query = query.eq("transaction_type", q.type);
-    if (q.sourceId) query = query.eq("source_id", q.sourceId);
 
-    const { data, error, count } = await query;
-    if (error) throw dbError("load your transactions");
+    // The same filters for the page query and (if needed) a count-only query.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const applyFilters = <Q extends { gte: any; lt: any; ilike: any; is: any; eq: any }>(query: Q): Q => {
+      let out = query;
+      if (q.month) {
+        const { start, end } = monthRange(q.month);
+        out = out.gte("transaction_date", start).lt("transaction_date", end);
+      }
+      if (q.q) out = out.ilike("cleaned_description", likePattern(q.q));
+      if (q.categoryId === "none") out = out.is("category_id", null);
+      else if (q.categoryId) out = out.eq("category_id", q.categoryId);
+      if (q.type) out = out.eq("transaction_type", q.type);
+      if (q.sourceId) out = out.eq("source_id", q.sourceId);
+      return out;
+    };
+
+    const db = req.auth!.db;
+    const { data, error, count } = await applyFilters(
+      db
+        .from("transactions")
+        .select(LIST_COLUMNS, { count: "exact" })
+        .order("transaction_date", { ascending: false })
+        .order("created_at", { ascending: false })
+        .range(q.offset, q.offset + q.limit - 1),
+    );
+
+    if (error) {
+      // A page past the end (e.g. after deleting rows) is an empty page, not a failure.
+      if (error.code === "PGRST103") {
+        const { count: total, error: countError } = await applyFilters(
+          db.from("transactions").select("id", { count: "exact", head: true }),
+        );
+        if (countError) throw dbError("load your transactions");
+        res.json({ transactions: [], total: total ?? 0, offset: q.offset, limit: q.limit });
+        return;
+      }
+      throw dbError("load your transactions");
+    }
     res.json({
       transactions: ((data ?? []) as unknown as ListRow[]).map(toTransaction),
       total: count ?? 0,

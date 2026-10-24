@@ -570,7 +570,7 @@ This section defines expected behaviour for the 16 primary screen groups. These 
 - Select a trend or category.
 - Request an explanation or budget suggestion.
 - Inspect supporting transactions.
-- Continue to Screen 15 for a question.
+- Continue to Explain my spending (Screen 15).
 
 **Rules**
 - Opening the screen must not call Gemini.
@@ -582,41 +582,32 @@ This section defines expected behaviour for the 16 primary screen groups. These 
 **States**
 - No history, insufficient comparison data, populated, partial coverage, AI not requested, AI unavailable/quota exhausted, analysis failure.
 
-### Screen 15 — Ask RandRoute
+### Screen 15 — Explain my spending (AI summary)
 
-**Purpose:** Answer user questions about their imported financial records in plain language.
+**Purpose:** Give a plain-language explanation of the user's own spending for a month, with practical ideas to improve. There is **no free-typed question box** — people can't steer the AI with unusual or unsafe questions; it only ever explains their own figures.
 
-**Example questions**
-- "Why did my transport spending increase?"
-- "How much did I spend on subscriptions this month?"
-- "What would happen if I reduced takeaway spending?"
-- "Based on the records I imported, how much might I save?"
+**Where:** The **Explain my spending** button in the Insights header (Screen 14), next to the month picker. Budget planning (Screen 13) has a separate, optional "Review my plan with AI".
 
-**Content**
-- Question field.
-- Optional period/category selectors.
-- Submit action.
-- Answer with supporting figures and caveats.
-- Links to relevant transactions or summaries.
-- Clear conversation action.
+**What the explanation contains** (always these three sections):
+1. **Where your money went** — biggest categories, money in vs money out.
+2. **What changed** — changes from last month, unusual spending, budget limits (or why there's nothing to compare).
+3. **How you could improve** — 2–4 practical ideas based on their own categories and figures.
 
 **Request flow**
-1. User explicitly submits a question.
-2. Server validates authentication, consent, and allowed scope.
-3. RandRoute computes the relevant figures.
-4. Only the minimum de-identified summary needed is sent to Gemini.
-5. The answer is shown with caveats and links to the supporting app data where possible.
+1. User presses **Explain my spending**.
+2. Server validates authentication, AI consent (current policy version) and the daily limit (20 per user).
+3. RandRoute computes the month's figures.
+4. Only the minimum de-identified summary (category totals, changes, budget status, coverage limitations) is sent to Gemini — never descriptions, PDFs, account numbers, names or emails.
+5. The answer is shown labelled "Written by AI", with a "What was shared with the AI" panel.
 
 **Rules**
-- Gemini must not be the calculator or source of truth.
-- Do not send PDFs, raw extracted statement text, credentials, full account numbers, or unnecessary identifiers.
+- Gemini is never the calculator or source of truth.
 - Never expose the API key in the browser.
-- Rate-limit requests and handle provider quotas.
-- Core features remain usable if AI is disabled.
-- Do not present advice as guaranteed financial outcomes.
+- If the main model is busy, a backup model is tried once; if AI is unavailable, the app says so and all figures keep working.
+- No investment, credit, tax or legal advice; no guaranteed outcomes.
 
 **States**
-- Ready, generating, answer available, insufficient data, consent required, AI unavailable, quota exhausted, request failure, cleared conversation.
+- Not requested, consent required, generating, answer shown, AI switched off, daily limit reached, AI unavailable.
 
 ### Screen 16 — Profile and privacy settings
 

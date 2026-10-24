@@ -221,7 +221,7 @@ export type Insights = {
   limitations: string[]
 }
 
-export type AiAnswer = { text: string; basedOn: unknown; generatedAt: string; question?: string }
+export type AiAnswer = { text: string; basedOn: unknown; generatedAt: string }
 
 /** Signed-in API calls. Each one sends the access token and refreshes it if needed. */
 export function useApi() {
@@ -270,7 +270,6 @@ export function useApi() {
       insights: {
         get: (month: string) => authRequest<{ insights: Insights; ai: { available: boolean } }>(`/api/insights?month=${month}`),
         explain: (month: string) => authRequest<AiAnswer>('/api/insights/explain', { method: 'POST', body: { month } }),
-        ask: (month: string, question: string) => authRequest<AiAnswer>('/api/ask', { method: 'POST', body: { month, question } }),
         budgetSuggestions: (
           month: string,
           plan: { expectedIncomeMinor: number | null; savingsTargetMinor: number | null; limits: { name: string; limitMinor: number; averageMinor: number | null }[] },
@@ -285,7 +284,7 @@ export function useApi() {
         get: (id: string) => authRequest<StatementDetail>(`/api/statements/${id}`),
         upload: (form: FormData, signal?: AbortSignal) =>
           authRequest<UploadResult>('/api/statements/upload', { method: 'POST', body: form, signal }),
-        update: (id: string, body: { periodStart?: string; periodEnd?: string; nickname?: string | null }) =>
+        update: (id: string, body: { periodStart?: string; periodEnd?: string; nickname?: string | null; bankFormat?: string }) =>
           authRequest<null>(`/api/statements/${id}`, { method: 'PATCH', body }),
         updateRow: (id: string, rowId: string, body: RowPatch) =>
           authRequest<null>(`/api/statements/${id}/rows/${rowId}`, { method: 'PATCH', body }),

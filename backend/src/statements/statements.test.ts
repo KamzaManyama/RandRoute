@@ -155,6 +155,35 @@ describe("PDF → transactions", () => {
     expect(result.validation.period_source).toBe("user");
   });
 
+  it("detects Standard Bank even when transactions mention Capitec", async () => {
+    const standardBank = {
+      bankLine: "Standard Bank",
+      headerLines: ["The Standard Bank of South Africa Limited", "From Date: 01/09/2026 To Date: 30/09/2026"],
+      openingLine: { label: "Balance Brought Forward", amount: "5 000.00" },
+      rows: [
+        { date: "02/09/2026", description: ["Payment To Capitec J Example"], amount: "-500.00", balance: "4 500.00" },
+        { date: "03/09/2026", description: ["Capitec Transfer Received"], amount: "200.00", balance: "4 700.00" },
+        { date: "04/09/2026", description: ["Capitec Cash Send"], amount: "-100.00", balance: "4 600.00" },
+      ],
+    };
+    const result = parseStatement(await extractLines(await buildStatementPdf(standardBank)));
+    expect(result.bankKey).toBe("standard_bank");
+    expect(result.period).toEqual({ start: "2026-09-01", end: "2026-09-30" });
+    expect(result.validation.period_source).toBe("statement");
+    expect(result.validation.balance_check).toBe("passed");
+  });
+
+  it("detects Capitec even when transactions mention Standard Bank", async () => {
+    const capitec = {
+      ...capitecStyle,
+      rows: [
+        { date: "01/10/2026", description: ["Standard Bank ATM Withdrawal"], amount: "-310.25", balance: "889.75" },
+        { date: "03/10/2026", description: ["Transfer To Standard Bank"], amount: "-500.00", balance: "389.75" },
+      ],
+    };
+    expect(parseStatement(await extractLines(await buildStatementPdf(capitec))).bankKey).toBe("capitec");
+  });
+
   it("explains when no transactions are found", async () => {
     const lines = await extractLines(await buildStatementPdf({ bankLine: "Tax certificate 2026", headerLines: ["Total 100.00"], rows: [] }));
     expect(() => parseStatement(lines)).toThrow(StatementParseError);

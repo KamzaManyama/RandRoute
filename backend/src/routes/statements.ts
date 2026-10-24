@@ -45,6 +45,7 @@ const importPatchSchema = z
     periodStart: isoDate.optional(),
     periodEnd: isoDate.optional(),
     nickname: z.string().trim().max(60).nullable().optional(),
+    bankFormat: z.string().refine(isKnownFormat, "Choose a bank from the list.").optional(),
   })
   .refine((v) => !v.periodStart || !v.periodEnd || v.periodEnd >= v.periodStart, {
     path: ["periodEnd"],
@@ -121,6 +122,23 @@ async function findDuplicates(db: SupabaseClient, rows: ParsedRow[]) {
   return matches;
 }
 
+/**
+ * Data retention: unconfirmed imports older than 24 hours are cancelled and
+ * their waiting rows deleted. Runs for the signed-in user whenever they open or
+ * upload statements (the database also has cleanup_stale_imports() for a schedule).
+ */
+async function cancelStaleImports(db: SupabaseClient) {
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await db
+    .from("statement_imports")
+    .update({ status: "cancelled" })
+    .in("status", ["staged", "needs_review"])
+    .lt("created_at", cutoff)
+    .select("id");
+  if (error || !data?.length) return;
+  await db.from("staged_transactions").delete().in("import_id", data.map((d) => d.id as string));
+}
+
 async function findOrCreateSource(db: SupabaseClient, userId: string, bankKey: string, nickname?: string) {
   let query = db.from("statement_sources").select("id").eq("bank_format_key", bankKey).limit(1);
   query = nickname ? query.eq("nickname", nickname) : query.is("nickname", null);
@@ -191,6 +209,7 @@ export function statementsRouter(supabase: SupabaseClients): Router {
 
   /** All imports for the signed-in user, newest first. */
   router.get("/", async (req, res) => {
+    await cancelStaleImports(req.auth!.db);
     const { data, error } = await req.auth!.db
       .from("statement_imports")
       .select(IMPORT_COLUMNS)
@@ -220,6 +239,7 @@ export function statementsRouter(supabase: SupabaseClients): Router {
         throw new HttpError(400, "validation_error", "Choose a PDF statement to upload.", { file: "Choose a PDF file." });
       }
       const fields = parseBody(uploadFieldsSchema, req.body);
+      await cancelStaleImports(auth.db);
 
       const bytes = new Uint8Array(file.buffer.buffer, file.buffer.byteOffset, file.buffer.byteLength);
       const isPdf = file.buffer.subarray(0, 5).toString("latin1") === "%PDF-";
@@ -379,32 +399,52 @@ export function statementsRouter(supabase: SupabaseClients): Router {
     res.json({ statement: toImportSummary(imp), reviewing, rows });
   });
 
-  /** Correct the statement period or nickname while reviewing. */
+  /**
+   * Correct a statement: the bank or nickname at any time (e.g. if the bank was
+   * detected wrongly), and the period while it's still being reviewed.
+   */
   router.patch("/:id", async (req, res) => {
     const auth = req.auth!;
     const body = parseBody(importPatchSchema, req.body);
     const { data: imp, error } = await auth.db
       .from("statement_imports")
-      .select("id, status, bank_format_key, period_start, period_end")
+      .select("id, status, bank_format_key, period_start, period_end, statement_sources(nickname)")
       .eq("id", req.params.id)
       .maybeSingle();
     if (error) throw dbError("update this statement");
     if (!imp) throw new HttpError(404, "not_found", "Statement not found.");
-    if (imp.status !== "staged" && imp.status !== "needs_review") {
-      throw new HttpError(409, "already_imported", "This statement has already been imported.");
+
+    const reviewing = imp.status === "staged" || imp.status === "needs_review";
+    const update: Record<string, unknown> = {};
+
+    if (body.periodStart !== undefined || body.periodEnd !== undefined) {
+      if (!reviewing) throw new HttpError(409, "already_imported", "The period can only be changed before importing.");
+      const start = body.periodStart ?? imp.period_start;
+      const end = body.periodEnd ?? imp.period_end;
+      if (end < start) {
+        throw new HttpError(400, "validation_error", "Please check the highlighted fields.", {
+          periodEnd: "The end date must be on or after the start date.",
+        });
+      }
+      update.period_start = start;
+      update.period_end = end;
     }
 
-    const start = body.periodStart ?? imp.period_start;
-    const end = body.periodEnd ?? imp.period_end;
-    if (end < start) {
-      throw new HttpError(400, "validation_error", "Please check the highlighted fields.", {
-        periodEnd: "The end date must be on or after the start date.",
-      });
+    if (body.nickname !== undefined || body.bankFormat !== undefined) {
+      const source = Array.isArray(imp.statement_sources) ? imp.statement_sources[0] : imp.statement_sources;
+      const bank = body.bankFormat ?? imp.bank_format_key;
+      const nickname = body.nickname !== undefined ? (body.nickname ?? undefined) : ((source as { nickname: string | null } | null)?.nickname ?? undefined);
+      const sourceId = await findOrCreateSource(auth.db, auth.userId, bank, nickname);
+      update.bank_format_key = bank;
+      update.source_id = sourceId;
+      // Keep saved transactions pointing at the right account for the Spending filters.
+      if (!reviewing) {
+        const { error: txError } = await auth.db.from("transactions").update({ source_id: sourceId }).eq("import_id", imp.id);
+        if (txError) throw dbError("update this statement");
+      }
     }
-    const update: Record<string, unknown> = { period_start: start, period_end: end };
-    if (body.nickname !== undefined) {
-      update.source_id = await findOrCreateSource(auth.db, auth.userId, imp.bank_format_key, body.nickname ?? undefined);
-    }
+
+    if (Object.keys(update).length === 0) throw new HttpError(400, "validation_error", "Nothing to update.");
     const { error: updateError } = await auth.db.from("statement_imports").update(update).eq("id", imp.id);
     if (updateError) throw dbError("update this statement");
     res.status(204).end();

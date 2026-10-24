@@ -13,7 +13,9 @@ import {
 import { ApiError } from '../../lib/api'
 import { formatDate, formatPeriod, money, parseRandInput, signedMoney } from '../../lib/format'
 import { FormAlert, TextField } from '../../components/forms'
-import { Chips, PageHeader, Stat, Stats } from '../../components/ui'
+import { FilterSelect, PageHeader, Stat, Stats } from '../../components/ui'
+import { Pagination } from '../../components/Pagination'
+import { PAGE_SIZE, usePaged } from '../../lib/paging'
 import { STATUS_INFO } from './statementStatus'
 import './statements.css'
 
@@ -129,6 +131,7 @@ export function StatementDetailPage() {
       {navState?.notice && <FormAlert tone="success">{navState.notice}</FormAlert>}
       {actionError && <FormAlert>{actionError}</FormAlert>}
 
+      {statement.status !== 'cancelled' && <BankEditor detail={detail} onSaved={load} />}
       <ValidationPanel detail={detail} />
 
       {detail.reviewing ? (
@@ -184,6 +187,84 @@ export function StatementDetailPage() {
         </section>
       )}
     </div>
+  )
+}
+
+/** Shows the bank and lets the user correct it (e.g. if it was detected wrongly). */
+function BankEditor({ detail, onSaved }: { detail: StatementDetail; onSaved: () => void }) {
+  const api = useApi()
+  const s = detail.statement
+  const [open, setOpen] = useState(false)
+  const [formats, setFormats] = useState<{ key: string; name: string }[]>([])
+  const [bank, setBank] = useState(s.bankFormat)
+  const [nickname, setNickname] = useState(s.nickname ?? '')
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  async function openEditor() {
+    setOpen(true)
+    setBank(s.bankFormat)
+    setNickname(s.nickname ?? '')
+    if (formats.length === 0) setFormats(await api.statements.formats().catch(() => []))
+  }
+
+  async function save(event: FormEvent) {
+    event.preventDefault()
+    setSaving(true)
+    setError(null)
+    try {
+      await api.statements.update(s.id, { bankFormat: bank, nickname: nickname.trim() || null })
+      setOpen(false)
+      onSaved()
+    } catch (err) {
+      setError(errorText(err, 'We could not update the bank.'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!open) {
+    return (
+      <section className="card period">
+        <p>
+          Bank: <strong>{s.bankName}</strong>
+          {s.nickname ? <> · {s.nickname}</> : null} <span className="muted small">— wrong bank? You can change it.</span>
+        </p>
+        <button type="button" className="button button--ghost button--small" onClick={openEditor}>
+          Change bank
+        </button>
+      </section>
+    )
+  }
+  return (
+    <form className="card stack" onSubmit={save} noValidate>
+      <h2 className="section-title">Which bank is this statement from?</h2>
+      {error && <FormAlert>{error}</FormAlert>}
+      <div className="form-grid">
+        <div className="field">
+          <label htmlFor="bank-format" className="field__label">
+            Bank
+          </label>
+          <select id="bank-format" className="field__input" value={bank} onChange={(e) => setBank(e.target.value)}>
+            {formats.map((f) => (
+              <option key={f.key} value={f.key}>
+                {f.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <TextField label="Nickname (optional)" value={nickname} maxLength={60} onChange={(e) => setNickname(e.target.value)} />
+      </div>
+      <p className="muted small">This only changes the label. Your transactions and amounts stay exactly as imported.</p>
+      <div className="form-actions">
+        <button type="button" className="button button--ghost button--small" onClick={() => setOpen(false)}>
+          Cancel
+        </button>
+        <button type="submit" className="button button--small" disabled={saving}>
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+    </form>
   )
 }
 
@@ -276,6 +357,7 @@ function ReviewSection(props: ReviewProps) {
   const tab: Tab = props.tab ?? (attention.length > 0 ? 'attention' : 'all')
   const shown =
     tab === 'attention' ? attention : tab === 'duplicates' ? duplicates : tab === 'excluded' ? excluded : rows
+  const paged = usePaged(shown, PAGE_SIZE, tab)
 
   const setRows = (next: ReviewRow[]) => onChanged({ ...detail, rows: next })
 
@@ -349,8 +431,8 @@ function ReviewSection(props: ReviewProps) {
       <section className="card">
         <div className="card__header">
           <h2 className="section-title">Transactions</h2>
-          <Chips
-            label="Show transactions"
+          <FilterSelect
+            label="Show"
             value={tab}
             onChange={props.setTab}
             options={[
@@ -368,11 +450,12 @@ function ReviewSection(props: ReviewProps) {
           </p>
         ) : (
           <ul className="review__rows">
-            {shown.map((row) => (
+            {paged.pageItems.map((row) => (
               <ReviewRowItem key={row.id} row={row} categories={categories} onUpdate={updateRow} />
             ))}
           </ul>
         )}
+        <Pagination page={paged.page} pageSize={paged.pageSize} total={paged.total} onChange={paged.setPage} label="Transaction pages" />
       </section>
 
       <section className="card review__footer">
@@ -676,6 +759,7 @@ function PeriodEditor({ detail, onSaved }: { detail: StatementDetail; onSaved: (
 function SavedSection({ rows, categoryName }: { rows: SavedRow[]; categoryName: Map<string, string> }) {
   const moneyIn = rows.filter((r) => r.direction === 'inflow').reduce((s, r) => s + r.amountMinor, 0)
   const moneyOut = rows.filter((r) => r.direction === 'outflow').reduce((s, r) => s + r.amountMinor, 0)
+  const paged = usePaged(rows, PAGE_SIZE)
   return (
     <section className="card">
       <div className="card__header">
@@ -688,7 +772,7 @@ function SavedSection({ rows, categoryName }: { rows: SavedRow[]; categoryName: 
         <p className="muted">No transactions were saved from this statement.</p>
       ) : (
         <ul className="review__rows">
-          {rows.map((r) => (
+          {paged.pageItems.map((r) => (
             <li key={r.id} className="review-row">
               <div className="review-row__main">
                 <div className="review-row__text">
@@ -706,6 +790,7 @@ function SavedSection({ rows, categoryName }: { rows: SavedRow[]; categoryName: 
           ))}
         </ul>
       )}
+      <Pagination page={paged.page} pageSize={paged.pageSize} total={paged.total} onChange={paged.setPage} label="Saved transaction pages" />
     </section>
   )
 }

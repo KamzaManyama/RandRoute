@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import {
   useApi,
@@ -10,14 +10,16 @@ import {
 } from '../lib/useApi'
 import { ApiError } from '../lib/api'
 import { changeLabel, currentMonth, formatDate, isMonth, money, monthLabel, signedMoney } from '../lib/format'
-import { Chips, EmptyState, MonthPicker, PageHeader, ShareBar, Stat, Stats } from '../components/ui'
+import { EmptyState, MonthPicker, PageHeader, ShareBar, Stat, Stats, FilterSelect } from '../components/ui'
 import { TrendChart } from '../components/TrendChart'
 import { FormAlert } from '../components/forms'
+import { Pagination } from '../components/Pagination'
+import { PAGE_SIZE } from '../lib/paging'
 
-const PAGE_SIZE = 50
+
 
 const TYPE_OPTIONS: { value: TransactionType | 'all'; label: string }[] = [
-  { value: 'all', label: 'All' },
+  { value: 'all', label: 'All types' },
   { value: 'expense', label: 'Spending' },
   { value: 'income', label: 'Income' },
   { value: 'transfer', label: 'Transfers' },
@@ -40,11 +42,14 @@ export function SpendingPage() {
   const categoryId = params.get('category') ?? ''
   const type = (params.get('type') ?? 'all') as TransactionType | 'all'
   const sourceId = params.get('source') ?? ''
+  const page = Math.max(1, Number.parseInt(params.get('page') ?? '1', 10) || 1)
 
   const setParam = (changes: Record<string, string | null>) => {
     setParams(
       (prev) => {
         const next = new URLSearchParams(prev)
+        // Any filter change starts the list again from page 1.
+        if (Object.keys(changes).some((k) => k !== 'page')) next.delete('page')
         for (const [k, v] of Object.entries(changes)) {
           if (v === null || v === '') next.delete(k)
           else next.set(k, v)
@@ -89,9 +94,9 @@ export function SpendingPage() {
   const s = summaryLoading ? null : summary.data
 
   // Transaction list (filters + paging)
-  const listKey = JSON.stringify({ month: allTime ? null : month, q, categoryId, type, sourceId })
+  const listKey = JSON.stringify({ month: allTime ? null : month, q, categoryId, type, sourceId, page })
   const [list, setList] = useState<{ key: string; rows: Transaction[]; total: number; error: string | null } | null>(null)
-  const [loadingMore, setLoadingMore] = useState(false)
+  const listRef = useRef<HTMLElement>(null)
   const query = useMemo(
     () => ({
       month: allTime ? undefined : month,
@@ -100,8 +105,9 @@ export function SpendingPage() {
       type: type === 'all' ? undefined : type,
       sourceId: sourceId || undefined,
       limit: PAGE_SIZE,
+      offset: (page - 1) * PAGE_SIZE,
     }),
-    [allTime, month, q, categoryId, type, sourceId],
+    [allTime, month, q, categoryId, type, sourceId, page],
   )
   useEffect(() => {
     const controller = new AbortController()
@@ -116,17 +122,16 @@ export function SpendingPage() {
   const listLoading = list?.key !== listKey
   const rows = listLoading ? [] : list.rows
 
-  async function loadMore() {
-    if (!list) return
-    setLoadingMore(true)
-    try {
-      const res = await api.transactions.list({ ...query, offset: list.rows.length })
-      setList({ ...list, rows: [...list.rows, ...res.transactions], total: res.total })
-    } catch (err) {
-      setList({ ...list, error: errorText(err, 'We could not load more transactions.') })
-    } finally {
-      setLoadingMore(false)
-    }
+  // If the list got shorter (e.g. after deleting), don't sit on an empty page past the end.
+  const lastPage = list && !listLoading ? Math.max(1, Math.ceil(list.total / PAGE_SIZE)) : null
+  useEffect(() => {
+    if (lastPage !== null && page > lastPage) setParam({ page: String(lastPage) })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastPage, page])
+
+  function goToPage(p: number) {
+    setParam({ page: p === 1 ? null : String(p) })
+    listRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
   }
 
   const filtersActive = Boolean(q || categoryId || type !== 'all' || sourceId)
@@ -174,7 +179,7 @@ export function SpendingPage() {
 
           <Stats label={`Totals for ${monthLabel(month)}`}>
             <Stat label="Money out" value={s ? money(s.moneyOut) : '…'} hint={moneyOutHint} />
-            <Stat label="Money in" value={s ? money(s.moneyIn) : '…'} hint={s && s.unclassifiedIn > 0 ? `+ ${money(s.unclassifiedIn)} not marked as income` : undefined} />
+            <Stat label="Money in" value={s ? money(s.moneyIn) : '…'} tone="positive" hint={s && s.unclassifiedIn > 0 ? `+ ${money(s.unclassifiedIn)} not marked as income` : undefined} />
             <Stat label="Top category" value={top ? top.name : s ? '—' : '…'} hint={top ? money(top.total) : undefined} />
             <Stat
               label="Transactions"
@@ -268,75 +273,54 @@ export function SpendingPage() {
               )}
             </div>
 
-            <section className="card stack">
-              <div className="card__header card__header--flush">
-                <h2 className="section-title">Transactions</h2>
-                <Chips
-                  label="Period"
-                  value={allTime ? 'all' : 'month'}
-                  onChange={(v) => setParam({ scope: v === 'all' ? 'all' : null })}
-                  options={[
-                    { value: 'month', label: monthLabel(month) },
-                    { value: 'all', label: 'All time' },
-                  ]}
-                />
-              </div>
+            <section className="card stack" ref={listRef}>
+              <h2 className="section-title">Transactions</h2>
 
               <div className="stack">
-                <div className="toolbar">
-                  <div className="toolbar__grow">
-                    <label htmlFor="spending-search" className="visually-hidden">
-                      Search transactions
-                    </label>
-                    <input
-                      id="spending-search"
-                      type="search"
-                      className="search-input"
-                      placeholder={allTime ? 'Search all your transactions' : `Search ${monthLabel(month)}`}
-                      value={searchText}
-                      onChange={(e) => setSearchText(e.target.value)}
-                    />
-                  </div>
-                  <label className="visually-hidden" htmlFor="spending-category">
-                    Category
-                  </label>
-                  <select
-                    id="spending-category"
-                    className="field__input field__input--inline"
+                <label htmlFor="spending-search" className="visually-hidden">
+                  Search transactions
+                </label>
+                <input
+                  id="spending-search"
+                  type="search"
+                  className="search-input"
+                  placeholder={allTime ? 'Search all your transactions' : `Search ${monthLabel(month)}`}
+                  value={searchText}
+                  onChange={(e) => setSearchText(e.target.value)}
+                />
+                <div className="filters">
+                  <FilterSelect
+                    label="Period"
+                    value={allTime ? 'all' : 'month'}
+                    onChange={(v) => setParam({ scope: v === 'all' ? 'all' : null })}
+                    options={[
+                      { value: 'month', label: monthLabel(month) },
+                      { value: 'all', label: 'All time' },
+                    ]}
+                  />
+                  <FilterSelect
+                    label="Category"
                     value={categoryId}
-                    onChange={(e) => setParam({ category: e.target.value || null })}
-                  >
-                    <option value="">All categories</option>
-                    <option value="none">No category</option>
-                    {categories.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(v) => setParam({ category: v || null })}
+                    options={[
+                      { value: '', label: 'All categories' },
+                      { value: 'none', label: 'No category' },
+                      ...categories.map((c) => ({ value: c.id, label: c.name })),
+                    ]}
+                  />
+                  <FilterSelect label="Type" value={type} onChange={(v) => setParam({ type: v === 'all' ? null : v })} options={TYPE_OPTIONS} />
                   {sources.length > 1 && (
-                    <>
-                      <label className="visually-hidden" htmlFor="spending-source">
-                        Account
-                      </label>
-                      <select
-                        id="spending-source"
-                        className="field__input field__input--inline"
-                        value={sourceId}
-                        onChange={(e) => setParam({ source: e.target.value || null })}
-                      >
-                        <option value="">All accounts</option>
-                        {sources.map((src) => (
-                          <option key={src.id} value={src.id}>
-                            {src.bankName}
-                            {src.nickname ? ` · ${src.nickname}` : ''}
-                          </option>
-                        ))}
-                      </select>
-                    </>
+                    <FilterSelect
+                      label="Account"
+                      value={sourceId}
+                      onChange={(v) => setParam({ source: v || null })}
+                      options={[
+                        { value: '', label: 'All accounts' },
+                        ...sources.map((src) => ({ value: src.id, label: `${src.bankName}${src.nickname ? ` · ${src.nickname}` : ''}` })),
+                      ]}
+                    />
                   )}
                 </div>
-                <Chips label="Type" value={type} onChange={(v) => setParam({ type: v === 'all' ? null : v })} options={TYPE_OPTIONS} />
               </div>
 
               <p className="muted small" aria-live="polite">
@@ -400,10 +384,8 @@ export function SpendingPage() {
                 </ul>
               )}
 
-              {!listLoading && rows.length < list.total && (
-                <button type="button" className="button button--ghost button--block" onClick={loadMore} disabled={loadingMore}>
-                  {loadingMore ? 'Loading…' : `Show more (${list.total - rows.length} left)`}
-                </button>
+              {!listLoading && (
+                <Pagination page={page} pageSize={PAGE_SIZE} total={list.total} onChange={goToPage} label="Transaction pages" />
               )}
             </section>
           </div>

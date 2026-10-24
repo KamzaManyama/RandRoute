@@ -126,6 +126,7 @@ export async function buildInsights(db: SupabaseClient, month: string) {
     },
     comparison,
     topCategories: current.categories.slice(0, 5).map((c) => ({ categoryId: c.categoryId, name: c.name, totalMinor: c.total, count: c.count })),
+    savings: savingsIdeas(current.categories, limits),
     changes,
     unusual,
     unusualCheck,
@@ -136,6 +137,44 @@ export async function buildInsights(db: SupabaseClient, month: string) {
     },
     limitations,
   };
+}
+
+/** Everyday categories people can usually trim. Names match the seeded system categories. */
+const FLEXIBLE_CATEGORIES = new Set([
+  "Eating out & takeaways",
+  "Entertainment",
+  "Shopping & clothing",
+  "Subscriptions",
+  "Personal care",
+  "Gifts & donations",
+  "Airtime & data",
+  "Transport & fuel",
+  "Groceries",
+]);
+
+/**
+ * Saving opportunities, calculated by the app (never by AI): how much trimming
+ * each flexible category by 10% or 25% would save per month and per year, and
+ * how far over budget any limit is.
+ */
+export function savingsIdeas(
+  categories: { categoryId: string | null; name: string; total: number }[],
+  limits: { name: string; limitMinor: number; spentMinor: number }[],
+) {
+  const trims = categories
+    .filter((c) => FLEXIBLE_CATEGORIES.has(c.name) && c.total >= 10_000) // at least R100 to be worth mentioning
+    .slice(0, 5)
+    .map((c) => ({
+      name: c.name,
+      spentMinor: c.total,
+      save10PercentMinor: Math.round(c.total * 0.1),
+      save25PercentMinor: Math.round(c.total * 0.25),
+      save25PercentYearlyMinor: Math.round(c.total * 0.25) * 12,
+    }));
+  const overBudget = limits
+    .filter((l) => l.spentMinor > l.limitMinor)
+    .map((l) => ({ name: l.name, overByMinor: l.spentMinor - l.limitMinor }));
+  return { trims, overBudget };
 }
 
 const r = (minor: number) => `R${(minor / 100).toFixed(2)}`;
@@ -164,6 +203,16 @@ export function aiContext(insights: MonthInsights) {
     })),
     unusualIncreases: insights.unusual.map((u) => ({ category: u.name, thisMonth: r(u.totalMinor), usualAverage: r(u.averageMinor) })),
     budget: insights.budget.limits.map((l) => ({ category: l.name, limit: r(l.limitMinor), spent: r(l.spentMinor), status: l.status })),
+    savingOpportunities: {
+      ifYouTrim: insights.savings.trims.map((t) => ({
+        category: t.name,
+        spentThisMonth: r(t.spentMinor),
+        save10PercentPerMonth: r(t.save10PercentMinor),
+        save25PercentPerMonth: r(t.save25PercentMinor),
+        save25PercentPerYear: r(t.save25PercentYearlyMinor),
+      })),
+      overBudget: insights.savings.overBudget.map((o) => ({ category: o.name, overBy: r(o.overByMinor) })),
+    },
     limitations: insights.limitations,
   };
 }

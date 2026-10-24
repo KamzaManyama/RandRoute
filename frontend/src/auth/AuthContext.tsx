@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { api, ApiError, apiRequest, type RequestOptions, type Session } from '../lib/api'
+import { api, ApiError, apiRequest, streamRequest, type RequestOptions, type Session, type StreamEvent } from '../lib/api'
 import { AuthContext, type AuthContextValue, type AuthState } from './authContextValue'
 
 // One refresh at a time, even if several callers (or React StrictMode) ask at once.
@@ -68,7 +68,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 
   const register = useCallback(
-    async (input: { email: string; password: string; displayName?: string }) => {
+    async (input: { email: string; password: string; displayName?: string; acceptedPolicies: true }) => {
       const result = await api.auth.register(input)
       if (result.status === 'signed_in') {
         applySession(result.session)
@@ -120,6 +120,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [applySession],
   )
 
+  const authStream = useCallback(
+    async (path: string, body: unknown, onEvent: (e: StreamEvent) => void, signal?: AbortSignal) => {
+      try {
+        await streamRequest(path, { body, token: tokenRef.current, onEvent, signal })
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.status !== 401) throw error
+        const session = await refreshOnce()
+        applySession(session)
+        if (!session) throw error
+        await streamRequest(path, { body, token: session.accessToken, onEvent, signal })
+      }
+    },
+    [applySession],
+  )
+
   const value = useMemo<AuthContextValue>(
     () => ({
       ...state,
@@ -131,8 +146,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setRecoveryToken,
       resetPassword,
       authRequest,
+      authStream,
     }),
-    [state, login, register, logout, startSessionFromLink, recoveryToken, resetPassword, authRequest],
+    [state, login, register, logout, startSessionFromLink, recoveryToken, resetPassword, authRequest, authStream],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

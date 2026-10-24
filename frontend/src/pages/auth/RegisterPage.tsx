@@ -15,6 +15,7 @@ export function RegisterPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
+  const [agreed, setAgreed] = useState(false)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -32,6 +33,7 @@ export function RegisterPage() {
     if (pwError) errors.password = pwError
     if (!pwError && confirm !== password) errors.confirm = "Passwords don't match."
     if (displayName.trim().length > 60) errors.displayName = 'Use 60 characters or fewer.'
+    if (!agreed) errors.acceptedPolicies = 'Please confirm you\x27ve read the privacy, data retention and cookie policies.'
     setFieldErrors(errors)
     if (Object.keys(errors).length) return
 
@@ -41,6 +43,7 @@ export function RegisterPage() {
         email: email.trim(),
         password,
         displayName: displayName.trim() || undefined,
+        acceptedPolicies: true,
       })
       if (needsVerification) setSentTo(email.trim())
       else navigate('/', { replace: true })
@@ -98,6 +101,7 @@ export function RegisterPage() {
     <AuthLayout
       title="Create your account"
       subtitle="It takes a minute. No bank login needed."
+      hero={{ headline: "Let's get you started.", text: "Create an account to import statements, see your spending and plan a budget." }}
       footer={
         <>
           Already have an account?{' '}
@@ -146,6 +150,37 @@ export function RegisterPage() {
           onChange={(e) => setConfirm(e.target.value)}
           error={fieldErrors.confirm}
         />
+        <div className="field">
+          <label className="auth__consent">
+            <input
+              type="checkbox"
+              checked={agreed}
+              onChange={(e) => setAgreed(e.target.checked)}
+              aria-invalid={fieldErrors.acceptedPolicies ? true : undefined}
+              aria-describedby={fieldErrors.acceptedPolicies ? 'consent-error' : undefined}
+            />
+            <span>
+              I have read and agree to the{' '}
+              <Link to="/privacy" target="_blank" className="auth__link">
+                Privacy Policy
+              </Link>
+              ,{' '}
+              <Link to="/data-retention" target="_blank" className="auth__link">
+                Data Retention Policy
+              </Link>{' '}
+              and{' '}
+              <Link to="/cookies" target="_blank" className="auth__link">
+                Cookie Policy
+              </Link>
+              .
+            </span>
+          </label>
+          {fieldErrors.acceptedPolicies && (
+            <p id="consent-error" className="field__error">
+              {fieldErrors.acceptedPolicies}
+            </p>
+          )}
+        </div>
         <SubmitButton loading={loading}>Create account</SubmitButton>
       </form>
     </AuthLayout>

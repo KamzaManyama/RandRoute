@@ -5,13 +5,15 @@ import { ApiError } from '../lib/api'
 import { formatDate, formatPeriod } from '../lib/format'
 import { FormAlert } from '../components/forms'
 import { isReviewing, STATUS_INFO } from './statements/statementStatus'
-import { Chips, EmptyState, PageHeader, Stat, Stats } from '../components/ui'
+import { EmptyState, FilterSelect, PageHeader, Stat, Stats } from '../components/ui'
+import { Pagination } from '../components/Pagination'
+import { PAGE_SIZE, usePaged } from '../lib/paging'
 import './statements/statements.css'
 
 type Filter = 'all' | 'review' | 'imported' | 'problems'
 
 const FILTERS: { key: Filter; label: string; test: (s: StatementSummary) => boolean }[] = [
-  { key: 'all', label: 'All', test: () => true },
+  { key: 'all', label: 'All statements', test: () => true },
   { key: 'review', label: 'Needs review', test: (s) => isReviewing(s.status) },
   { key: 'imported', label: 'Imported', test: (s) => s.status === 'imported' || s.status === 'partial' },
   { key: 'problems', label: 'Warnings', test: (s) => s.warnings.length > 0 || s.status === 'failed' },
@@ -41,6 +43,7 @@ export function StatementsPage() {
     // Cancelled imports saved nothing; keep them out of the default list.
     return (statements ?? []).filter((s) => test(s) && (filter !== 'all' || s.status !== 'cancelled'))
   }, [statements, filter])
+  const paged = usePaged(visible, PAGE_SIZE, filter)
 
   const imported = (statements ?? []).filter((s) => s.status === 'imported' || s.status === 'partial')
   const stats = {
@@ -105,14 +108,14 @@ export function StatementsPage() {
           <section className="card">
             <div className="card__header">
               <h2 className="section-title">History</h2>
-              <Chips label="Filter statements" value={filter} onChange={setFilter} options={FILTERS.map((f) => ({ value: f.key, label: f.label }))} />
+              <FilterSelect label="Show" value={filter} onChange={setFilter} options={FILTERS.map((f) => ({ value: f.key, label: f.label }))} />
             </div>
 
             {visible.length === 0 ? (
               <p className="muted">No statements match this filter.</p>
             ) : (
               <ul className="statements__list">
-                {visible.map((s) => {
+                {paged.pageItems.map((s) => {
                   const status = STATUS_INFO[s.status]
                   return (
                     <li key={s.id}>
@@ -150,6 +153,7 @@ export function StatementsPage() {
                 })}
               </ul>
             )}
+            <Pagination page={paged.page} pageSize={paged.pageSize} total={paged.total} onChange={paged.setPage} label="Statement pages" />
           </section>
         </>
       )}

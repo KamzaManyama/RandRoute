@@ -1,43 +1,141 @@
+/* Sign-in screens: split layout from loginDesign.jpg in RandRoute colours */
 .auth {
   min-height: 100vh;
   display: grid;
-  place-items: center;
-  padding: var(--space-6) var(--space-4);
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  background: var(--color-canvas);
 }
 
-.auth__column {
-  width: min(100%, 420px);
-  display: grid;
-  gap: var(--space-5);
+/* ---- Brand panel (left) ---- */
+.auth__panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--space-6);
+  padding: var(--space-7) clamp(var(--space-5), 6vw, 88px);
+  background: radial-gradient(120% 90% at 20% 30%, #2f2f22 0%, #141410 55%, #0b0b0b 100%);
+  color: var(--color-on-accent);
+  overflow: hidden;
+}
+
+/* soft yellow glow, echoing the lightning bolt in design.jpg */
+.auth__panel::after {
+  content: '';
+  position: absolute;
+  right: -120px;
+  bottom: -120px;
+  width: 360px;
+  height: 360px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgb(245 197 24 / 22%) 0%, transparent 70%);
+  pointer-events: none;
 }
 
 .auth__brand {
-  justify-self: center;
-  text-decoration: none;
+  color: var(--color-on-accent);
+  font-size: 1.35rem;
+}
+
+.auth__mark {
+  background: var(--color-highlight);
+  color: var(--color-ink);
+}
+
+.auth__hero {
+  display: grid;
+  gap: var(--space-4);
+  max-width: 460px;
+}
+
+.auth__headline {
+  font-size: clamp(2.2rem, 4.2vw, 3.2rem);
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+
+.auth__hero-text {
+  font-size: 1.1rem;
+  color: rgb(255 255 255 / 80%);
+}
+
+.auth__points {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-3);
+  color: rgb(255 255 255 / 70%);
+  font-size: 0.95rem;
+}
+
+.auth__points li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.auth__points svg {
+  flex: none;
+  color: var(--color-highlight);
+}
+
+.auth__panel-foot {
+  font-size: 0.85rem;
+  color: rgb(255 255 255 / 50%);
+}
+
+/* ---- Form side (right) ---- */
+.auth__side {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: var(--space-4);
+  padding: var(--space-6) var(--space-4);
 }
 
 .auth__card {
+  width: min(100%, 440px);
   background: var(--color-surface);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
-  padding: var(--space-6) var(--space-5);
+  box-shadow: var(--shadow-float);
+  padding: var(--space-7) var(--space-6);
   display: grid;
   gap: var(--space-4);
 }
 
 .auth__title {
-  font-size: 1.6rem;
+  font-size: 1.7rem;
+  text-align: center;
   letter-spacing: -0.01em;
 }
 
 .auth__subtitle {
   color: var(--color-muted);
+  text-align: center;
   margin-top: calc(var(--space-3) * -1);
 }
 
 .auth__form {
   display: grid;
   gap: var(--space-4);
+}
+
+/* Rounded, outlined inputs like the design */
+.auth .field__input {
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  padding: 13px 20px;
+}
+
+.auth .field__input:focus {
+  border-color: var(--color-ink);
+}
+
+.auth .field__password .field__input {
+  padding-right: 56px;
 }
 
 .auth__row {
@@ -49,6 +147,7 @@
 .auth__footer {
   text-align: center;
   color: var(--color-muted);
+  padding-top: var(--space-2);
 }
 
 .auth__link {
@@ -56,23 +155,23 @@
   font-weight: 600;
 }
 
-/* ---- Welcome ---- */
-.welcome__hero {
-  border-radius: var(--radius-lg);
-  padding: var(--space-6) var(--space-5);
-  display: grid;
+.auth__consent {
+  display: flex;
   gap: var(--space-3);
+  align-items: flex-start;
+  font-size: 0.9rem;
+  color: var(--color-ink-soft);
 }
 
-.welcome__hero h1 {
-  font-size: 1.9rem;
-  letter-spacing: -0.02em;
+.auth__consent input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  accent-color: var(--color-ink);
 }
 
-.welcome__hero p {
-  color: rgb(255 255 255 / 70%);
-}
-
+/* ---- Welcome ---- */
 .welcome__steps {
   list-style: none;
   margin: 0;
@@ -99,20 +198,42 @@
   font-size: 0.9rem;
 }
 
-.welcome__privacy {
-  display: flex;
-  gap: var(--space-3);
-  align-items: flex-start;
-  font-size: 0.95rem;
-  color: var(--color-ink-soft);
-}
-
-.welcome__privacy svg {
-  flex: none;
-  margin-top: 2px;
-}
-
 .welcome__actions {
   display: grid;
   gap: var(--space-3);
+}
+
+/* ---- Phones and small tablets: banner on top, card below ---- */
+@media (max-width: 900px) {
+  .auth {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .auth__panel {
+    padding: var(--space-5) var(--space-4) var(--space-7);
+    gap: var(--space-4);
+  }
+
+  .auth__points,
+  .auth__panel-foot {
+    display: none;
+  }
+
+  .auth__headline {
+    font-size: 2rem;
+  }
+
+  .auth__hero-text {
+    font-size: 1rem;
+  }
+
+  .auth__side {
+    margin-top: calc(var(--space-6) * -1);
+    align-content: start;
+    padding-top: 0;
+  }
+
+  .auth__card {
+    padding: var(--space-6) var(--space-5);
+  }
 }

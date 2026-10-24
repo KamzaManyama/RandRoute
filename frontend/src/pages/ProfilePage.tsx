@@ -7,7 +7,7 @@ import { ApiError } from '../lib/api'
 import { formatDate, parseRandInput } from '../lib/format'
 import { PageHeader } from '../components/ui'
 import { FormAlert, PasswordField, TextField } from '../components/forms'
-import { AiPolicyText } from '../components/ai'
+import { AiPolicyText, AiUnavailableNote } from '../components/ai'
 
 const toText = (minor: number | null | undefined) => (minor === null || minor === undefined ? '' : (minor / 100).toFixed(2))
 const errorText = (err: unknown, fallback: string) => (err instanceof ApiError ? err.message : fallback)
@@ -30,6 +30,11 @@ export function ProfilePage() {
           <DangerCard />
         </div>
       </div>
+      <nav className="legal-links" aria-label="Policies">
+        <Link to="/privacy">Privacy policy</Link>
+        <Link to="/data-retention">Data retention policy</Link>
+        <Link to="/cookies">Cookie policy</Link>
+      </nav>
       <p className="muted small">
         Deleted data is removed from the app straight away. Our database provider may keep encrypted backups for a
         limited time before they expire.
@@ -120,7 +125,7 @@ function AiCard() {
       {profile.ai.consent === 'outdated' && (
         <p className="preview-banner">How AI explanations work has changed since you agreed. Please review and turn it on again if you&apos;re happy.</p>
       )}
-      {!profile.ai.available && <p className="muted small">AI is currently switched off on this server, so nothing is sent either way.</p>}
+      {!profile.ai.available && <AiUnavailableNote />}
       {profile.ai.consentUpdatedAt && <p className="muted small">Last changed {formatDate(profile.ai.consentUpdatedAt)}.</p>}
       {error && <FormAlert>{error}</FormAlert>}
       <div className="form-actions">

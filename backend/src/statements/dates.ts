@@ -71,7 +71,8 @@ export function resolveDate(date: PartialDate, periodEndIso: string | null, fall
 /** Finds "01 Sep 2026 to 30 Sep 2026" style statement periods in free text. */
 export function findPeriod(text: string): { start: string; end: string } | null {
   const token = String.raw`(\d{1,2}[\s\-/.]+[A-Za-z]{3,9}\.?[\s\-/.]+\d{4}|\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4})`;
-  const re = new RegExp(`${token}\\s*(?:to|till|until|-|–|—)\\s*${token}`, "i");
+  // "01 Sep 2026 to 30 Sep 2026", "01/10/2026 - 31/10/2026", "From Date: 28/04/2026 To Date: 23/10/2026"
+  const re = new RegExp(`${token}\\s*(?:to|till|until|-|–|—)(?:\\s+date)?\\s*:?\\s*${token}`, "i");
   const m = re.exec(text);
   if (!m) return null;
   const a = parseDateToken(m[1]!);

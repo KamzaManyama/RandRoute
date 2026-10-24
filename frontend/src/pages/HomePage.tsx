@@ -82,7 +82,7 @@ export function HomePage() {
       {error && <FormAlert>{error}</FormAlert>}
 
       <Stats label={`Summary for ${monthLabel(month)}`}>
-        <Stat label="Money in" value={summary ? money(summary.moneyIn) : '…'} />
+        <Stat label="Money in" value={summary ? money(summary.moneyIn) : '…'} tone="positive" />
         <Stat label="Money out" value={summary ? money(summary.moneyOut) : '…'} />
         <Stat
           label="Net cash flow"

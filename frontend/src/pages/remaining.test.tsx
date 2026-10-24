@@ -117,32 +117,49 @@ describe('Insights and AI', () => {
     expect(calls.some((c) => c.path.includes('explain'))).toBe(false)
   })
 
-  it('asks for consent first, then shows the answer and what was shared', async () => {
+  it('opens the Explain page from Insights', async () => {
+    fakeBackend({ ...signedInRoutes, 'GET /api/insights': () => ({ insights, ai: { available: true } }) })
+    renderApp('/insights?month=2026-09')
+    expect(await screen.findByRole('link', { name: 'Explain my spending' })).toHaveAttribute('href', '/insights/explain?month=2026-09')
+  })
+
+  it('asks for consent, then streams the steps, the AI thinking and the answer', async () => {
     let profile = { ...testProfile }
+    const sse = [
+      ['step', { id: 'figures', label: 'Calculated your totals, changes and saving opportunities', state: 'done' }],
+      ['step', { id: 'ai', label: 'AI is thinking it through', state: 'active' }],
+      ['thought', { text: '**Looking at groceries**\nGroceries went over budget.' }],
+      ['step', { id: 'ai', label: 'AI finished thinking', state: 'done' }],
+      ['text', { text: 'Where your money went\n- Groceries rose the most.\n' }],
+      ['text', { text: 'How you could save\n- Plan meals to save R225.00 a month.' }],
+      ['step', { id: 'write', label: 'Explanation ready', state: 'done' }],
+      ['done', { generatedAt: '2026-10-24T10:00:00Z' }],
+    ]
+      .map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+      .join('')
     const { calls } = fakeBackend({
       ...signedInRoutes,
       'GET /api/profile': () => ({ profile }),
-      'GET /api/insights': () => ({ insights, ai: { available: true } }),
       'POST /api/profile/ai-consent': () => {
         profile = { ...profile, ai: { ...profile.ai, consent: 'granted' } }
         return { profile }
       },
-      'POST /api/insights/explain': () => ({
-        text: 'Groceries rose the most.\n- Check weekly shopping',
-        basedOn: { moneyOut: 'R9000.00' },
-        generatedAt: '2026-10-24T10:00:00Z',
-      }),
+      'POST /api/insights/explain/stream': () => new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } }),
     })
-    renderApp('/insights?month=2026-09')
-    await userEvent.click(await screen.findByRole('button', { name: 'Explain with AI' }))
+    renderApp('/insights/explain?month=2026-09')
+    await userEvent.click(await screen.findByRole('button', { name: 'Explain my spending' }))
     expect(screen.getByRole('heading', { name: 'Use AI explanations?' })).toBeInTheDocument()
-    expect(calls.some((c) => c.path === '/api/insights/explain')).toBe(false)
+    expect(calls.some((c) => c.path === '/api/insights/explain/stream')).toBe(false)
 
     await userEvent.click(screen.getByRole('button', { name: /I agree/ }))
-    expect(await screen.findByText('Groceries rose the most.')).toBeInTheDocument()
-    expect(screen.getByText('Check weekly shopping').tagName).toBe('LI')
+    expect(await screen.findByText('Plan meals to save R225.00 a month.')).toBeInTheDocument()
+    expect(screen.getByText('AI finished thinking')).toBeInTheDocument()
+    expect(screen.getByText('AI thinking')).toBeInTheDocument()
+    expect(screen.getByText('Looking at groceries')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 3, name: 'How you could save' })).toBeInTheDocument()
     expect(screen.getByText('Written by AI')).toBeInTheDocument()
-    expect(screen.getByText('What was shared with the AI')).toBeInTheDocument()
+    expect(screen.queryByText('What was shared with the AI')).not.toBeInTheDocument()
+    expect(calls.find((c) => c.path === '/api/insights/explain/stream')!.body).toEqual({ month: '2026-09' })
   })
 
   it('explains when AI is switched off', async () => {
@@ -152,22 +169,10 @@ describe('Insights and AI', () => {
       'GET /api/insights': () => ({ insights, ai: { available: false } }),
     })
     renderApp('/insights?month=2026-09')
-    expect(await screen.findByText(/AI explanations are switched off/)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Explain with AI' })).not.toBeInTheDocument()
+    expect(await screen.findByText(/AI answers are turned off right now/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Explain my spending' })).not.toBeInTheDocument()
   })
 
-  it('answers a question about the chosen month', async () => {
-    const { calls } = fakeBackend({
-      ...signedInRoutes,
-      'GET /api/profile': () => ({ profile: { ...testProfile, ai: { ...testProfile.ai, consent: 'granted' } } }),
-      'POST /api/ask': (req) => ({ ...(req.body as object), text: 'You spent R199.00 on subscriptions.', basedOn: {}, generatedAt: 'now' }),
-    })
-    renderApp('/insights/ask?month=2026-09')
-    await userEvent.type(await screen.findByLabelText('Your question'), 'How much on subscriptions?')
-    await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
-    expect(await screen.findByText('You spent R199.00 on subscriptions.')).toBeInTheDocument()
-    expect(calls.find((c) => c.path === '/api/ask')!.body).toEqual({ month: '2026-09', question: 'How much on subscriptions?' })
-  })
 })
 
 describe('Profile & privacy', () => {
@@ -184,7 +189,7 @@ describe('Profile & privacy', () => {
     await userEvent.type(screen.getByLabelText('Type DELETE to confirm'), 'DELETE')
     await userEvent.type(screen.getByLabelText('Your password'), 'Passw0rd!')
     await userEvent.click(screen.getAllByRole('button', { name: 'Delete my account' }).at(-1)!)
-    expect(await screen.findByRole('heading', { name: /see where your money goes/i })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Welcome to RandRoute' })).toBeInTheDocument()
     expect(calls.find((c) => c.path === '/api/profile/delete-account')!.body).toEqual({ confirm: 'DELETE', password: 'Passw0rd!' })
   })
 

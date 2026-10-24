@@ -120,3 +120,29 @@ export function ShareBar({ share, label }: { share: number; label: string }) {
     </div>
   )
 }
+
+/** A labelled dropdown used for every list filter. */
+export function FilterSelect<T extends string>({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string
+  options: { value: T; label: string }[]
+  value: T
+  onChange: (value: T) => void
+}) {
+  return (
+    <label className="filter-select">
+      <span className="filter-select__label">{label}</span>
+      <select className="filter-select__input" value={value} onChange={(e) => onChange(e.target.value as T)}>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+}
