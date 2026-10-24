@@ -1,0 +1,23 @@
+# Dependencies and builds
+node_modules/
+dist/
+.vite/
+coverage/
+*.tsbuildinfo
+
+# Secrets — never commit real keys
+.env
+.env.*
+!.env.example
+
+# Supabase CLI local state
+supabase/.branches/
+supabase/.temp/
+
+# Never commit real bank statements
+*.pdf
+
+# Logs and OS files
+*.log
+.DS_Store
+Thumbs.db

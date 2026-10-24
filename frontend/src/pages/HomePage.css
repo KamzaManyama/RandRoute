@@ -1,0 +1,33 @@
+.home {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.home__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.home__header h1 {
+  font-size: 1.6rem;
+}
+
+.home__hero {
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+}
+
+.home__hero h2 {
+  font-size: 1.35rem;
+}
+
+.home__hero-sub {
+  margin-top: var(--space-1);
+  color: rgb(255 255 255 / 65%);
+}
+
+.home__section-title {
+  font-size: 1.1rem;
+  margin-bottom: var(--space-2);
+}
