@@ -1,4 +1,4 @@
-# Accumen
+# RandRoute
 
 **Personal finance clarity for South Africans.**
 
