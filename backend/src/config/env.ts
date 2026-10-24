@@ -5,19 +5,30 @@ const booleanString = z
   .default("false")
   .transform((value) => value === "true");
 
+const resolveFrontendOrigins = (env: NodeJS.ProcessEnv): string[] => {
+  const explicit = env.FRONTEND_ORIGIN?.trim();
+  if (explicit) return explicit.split(",").map((origin) => origin.trim()).filter(Boolean);
+
+  if (env.VERCEL_URL) return [`https://${env.VERCEL_URL}`];
+  return ["http://localhost:4173"];
+};
+
+const resolveAuthRedirectUrl = (env: NodeJS.ProcessEnv): string => {
+  if (env.AUTH_REDIRECT_URL && env.AUTH_REDIRECT_URL.trim()) return env.AUTH_REDIRECT_URL.trim();
+  if (env.VERCEL_URL) return `https://${env.VERCEL_URL}/auth/callback`;
+  return "http://localhost:4173/auth/callback";
+};
+
 const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(4000),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-  FRONTEND_ORIGIN: z
-    .string()
-    .default("http://localhost:4173")
-    .transform((value) => value.split(",").map((origin) => origin.trim()).filter(Boolean)),
+  FRONTEND_ORIGIN: z.string().optional(),
 
   SUPABASE_URL: z.url({ error: "missing or invalid — use your project URL, e.g. https://xyz.supabase.co" }),
   SUPABASE_PUBLISHABLE_KEY: z.string({ error: "missing — copy the publishable key (sb_publishable_...) from Supabase" }).min(1, { error: "empty — fill it in backend/.env", abort: true }).min(20, "looks too short"),
   SUPABASE_SECRET_KEY: z.string({ error: "missing — copy the secret key (sb_secret_...) from Supabase" }).min(1, { error: "empty — fill it in backend/.env", abort: true }).min(20, "looks too short"),
   SUPABASE_JWKS_URL: z.url().optional(),
-  AUTH_REDIRECT_URL: z.url().default("http://localhost:4173/auth/callback"),
+  AUTH_REDIRECT_URL: z.string().optional(),
 
   // Refresh-token cookie. Defaults: Secure in production; SameSite=Lax (use "none" only
   // when the frontend and backend are on different sites, which also requires Secure).
@@ -31,6 +42,7 @@ const envSchema = z.object({
   GEMINI_FALLBACK_MODEL: z.string().default("gemini-3.5-flash"),
   // Used for "Explain my spending", which streams the model's thinking. Must support thought summaries.
   GEMINI_THINKING_MODEL: z.string().default("gemini-3.5-flash"),
+  VERCEL_URL: z.string().optional(),
 });
 
 export type AppConfig = {
@@ -79,16 +91,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new Error("COOKIE_SAMESITE=none requires COOKIE_SECURE=true.");
   }
 
+  const frontendOrigins = resolveFrontendOrigins(env);
+  const authRedirectUrl = resolveAuthRedirectUrl(env);
+
   return {
     port: e.PORT,
     nodeEnv: e.NODE_ENV,
-    frontendOrigins: e.FRONTEND_ORIGIN,
+    frontendOrigins,
     supabase: {
       url: e.SUPABASE_URL,
       publishableKey: e.SUPABASE_PUBLISHABLE_KEY,
       secretKey: e.SUPABASE_SECRET_KEY,
       jwksUrl: e.SUPABASE_JWKS_URL,
-      authRedirectUrl: e.AUTH_REDIRECT_URL,
+      authRedirectUrl,
     },
     cookies: {
       secure: cookieSecure,
