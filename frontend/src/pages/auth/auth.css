@@ -203,37 +203,36 @@
   gap: var(--space-3);
 }
 
-/* ---- Phones and small tablets: banner on top, card below ---- */
+/* ---- Phones and small tablets: hide brand panel completely and keep only form ---- */
 @media (max-width: 900px) {
   .auth {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: 1fr;
   }
 
   .auth__panel {
-    padding: var(--space-5) var(--space-4) var(--space-7);
-    gap: var(--space-4);
+    display: none !important;
+    width: 0;
+    height: 0;
+    padding: 0;
+    overflow: hidden;
+    border: 0;
   }
 
   .auth__points,
-  .auth__panel-foot {
-    display: none;
-  }
-
-  .auth__headline {
-    font-size: 2rem;
-  }
-
-  .auth__hero-text {
-    font-size: 1rem;
+  .auth__panel-foot,
+  .auth__hero,
+  .auth__brand {
+    display: none !important;
   }
 
   .auth__side {
-    margin-top: calc(var(--space-6) * -1);
-    align-content: start;
-    padding-top: 0;
+    margin-top: 0;
+    align-content: center;
+    padding: var(--space-5) var(--space-4);
   }
 
   .auth__card {
+    width: min(100%, 440px);
     padding: var(--space-6) var(--space-5);
   }
 }
