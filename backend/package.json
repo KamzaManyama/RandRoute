@@ -4,15 +4,15 @@
   "description": "RandRoute API server",
   "scripts": {
     "dev": "tsx watch src/devServer.ts",
-    "build": "tsc -p tsconfig.json",
-    "start": "node dist/devServer.js",
+    "start": "npm run compile && node dist/devServer.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:db": "node scripts/verify-migrations.mjs",
     "user:create": "node scripts/create-test-user.mjs",
     "fixtures": "tsx scripts/make-sample-statements.ts",
-    "demo": "tsx scripts/seed-demo.ts"
+    "demo": "tsx scripts/seed-demo.ts",
+    "compile": "tsc -p tsconfig.json"
   },
   "license": "UNLICENSED",
   "type": "module",

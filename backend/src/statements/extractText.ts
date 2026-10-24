@@ -3,6 +3,13 @@
  * Nothing is written to disk and the raw text is never stored or logged.
  */
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
+// Load pdf.js's worker code directly so it runs in this process. Without this,
+// pdf.js loads it later by file name, and serverless bundlers (Vercel) leave
+// that file out — every upload then fails as "couldn't be read as a PDF".
+// @ts-expect-error — the worker module ships without type declarations
+import * as pdfjsWorker from "pdfjs-dist/legacy/build/pdf.worker.mjs";
+
+(globalThis as { pdfjsWorker?: unknown }).pdfjsWorker ??= pdfjsWorker;
 
 export type Cell = { text: string; x: number; right: number };
 export type Line = { page: number; y: number; cells: Cell[]; text: string };
