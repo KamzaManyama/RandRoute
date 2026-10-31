@@ -3,7 +3,7 @@ import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { apiError, fakeBackend, signedInRoutes, testProfile } from '../test/fakeBackend'
 import { renderApp } from '../test/renderApp'
-import type { BudgetView, Insights } from '../lib/useApi'
+import type { BudgetView, CoachData, Insights } from '../lib/useApi'
 
 const categories = [
   { id: 'cat-g', key: 'groceries', name: 'Groceries', isSystem: true },
@@ -23,10 +23,20 @@ const budgetView = (over: Partial<BudgetView> = {}): BudgetView => ({
   unbudgeted: [{ categoryId: null, name: 'Uncategorised', spentMinor: 12000 }],
   totals: { plannedMinor: 400000, spentInBudgetMinor: 390000, remainingMinor: 10000, totalSpendingMinor: 402000, refundsMinor: 0 },
   coverage,
-  previousMonthHasBudget: false,
+  suggestedPlan: null,
   history: { months: 3, averages: [{ categoryId: 'cat-g', name: 'Groceries', averageMinor: 287000 }] },
   ...over,
 })
+
+const suggestedPlan: NonNullable<BudgetView['suggestedPlan']> = {
+  fromMonth: '2026-08',
+  expectedIncomeMinor: 2500000,
+  savingsTargetMinor: 200000,
+  limits: [
+    { categoryId: 'cat-g', name: 'Groceries', limitMinor: 300000 },
+    { categoryId: 'cat-t', name: 'Transport & fuel', limitMinor: 100000 },
+  ],
+}
 
 const insights: Insights = {
   month: '2026-09',
@@ -97,19 +107,58 @@ describe('Budget', () => {
     expect(screen.getByRole('link', { name: /Groceries/ })).toHaveAttribute('href', '/spending?month=2026-09&category=cat-g')
   })
 
-  it('offers to copy last month when there is no plan', async () => {
+  it('suggests the earlier plan for a month without one, and copies it on request', async () => {
     let copied = false
-    fakeBackend({
+    const { calls } = fakeBackend({
       ...signedInRoutes,
-      'GET /api/budgets/:month': () => (copied ? budgetView() : budgetView({ budget: null, limits: [], previousMonthHasBudget: true })),
+      'GET /api/budgets/:month': () => (copied ? budgetView() : budgetView({ budget: null, limits: [], suggestedPlan })),
       'POST /api/budgets/:month/copy-previous': () => {
         copied = true
-        return { copied: 2 }
+        return { copied: 2, fromMonth: '2026-08' }
       },
     })
     renderApp('/budget?month=2026-09')
-    await userEvent.click(await screen.findByRole('button', { name: /Copy last month/ }))
+    expect(await screen.findByRole('heading', { name: 'Use your August 2026 plan again?' })).toBeInTheDocument()
+    expect(screen.getByText(/^R\s4\s000,00$/)).toBeInTheDocument() // planned total
+    expect(screen.getByRole('link', { name: 'Adjust it first' })).toHaveAttribute('href', '/budget/plan?month=2026-09')
+    await userEvent.click(screen.getByRole('button', { name: 'Use it for September 2026' }))
     expect(await screen.findByText('Exceeded')).toBeInTheDocument()
+    expect(calls.some((c) => c.method === 'POST' && c.path === '/api/budgets/2026-09/copy-previous')).toBe(true)
+  })
+
+  it('pre-fills the plan form from the earlier plan', async () => {
+    const { calls } = fakeBackend({
+      ...signedInRoutes,
+      'GET /api/categories': () => ({ categories }),
+      'GET /api/budgets/:month': () => budgetView({ budget: null, limits: [], suggestedPlan }),
+      'PUT /api/budgets/:month': () => ({ budgetId: 'b2' }),
+    })
+    renderApp('/budget/plan?month=2026-09')
+    expect(await screen.findByText(/filled this in from your/)).toBeInTheDocument()
+    expect(screen.getByLabelText('Limit for Groceries')).toHaveValue('3000.00')
+    expect(screen.getByLabelText(/Expected income/)).toHaveValue('25000.00')
+    await userEvent.click(screen.getByRole('button', { name: 'Save plan' }))
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true))
+    expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({
+      expectedIncomeMinor: 2500000,
+      savingsTargetMinor: 200000,
+      limits: [
+        { categoryId: 'cat-g', limitMinor: 300000 },
+        { categoryId: 'cat-t', limitMinor: 100000 },
+      ],
+    })
+  })
+
+  it('lets the person clear the suggested plan', async () => {
+    fakeBackend({
+      ...signedInRoutes,
+      'GET /api/categories': () => ({ categories }),
+      'GET /api/budgets/:month': () => budgetView({ budget: null, limits: [], suggestedPlan }),
+    })
+    renderApp('/budget/plan?month=2026-09')
+    await userEvent.click(await screen.findByRole('button', { name: 'Start empty instead' }))
+    expect(screen.queryByLabelText('Limit for Groceries')).not.toBeInTheDocument()
+    expect(screen.queryByText(/filled this in from your/)).not.toBeInTheDocument()
   })
 
   it('plans a budget from averages and warns when it exceeds income', async () => {
@@ -134,15 +183,36 @@ describe('Budget', () => {
   })
 })
 
-const coachInput = {
+const coachInput: CoachData = {
   month: '2026-09',
   currency: 'ZAR',
   coverage: 'whole_month',
   income: 'R25 000.00',
+  incomeBreakdown: { salary: 'R24 000.00', sideIncome: 'R1 000.00', other: 'R0.00' },
+  incomeNotYetMarked: 'R0.00',
   spending: 'R9 000.00',
   net: 'R16 000.00',
   savingsRatePercent: 64,
+  topCategories: [{ category: 'Groceries', amount: 'R3 500.00', sharePercent: 39 }],
+  monthOverMonth: {
+    available: true,
+    spendingChangePercent: 13,
+    biggestChanges: [{ category: 'Groceries', thisMonth: 'R3 500.00', lastMonth: 'R2 800.00', changePercent: 25 }],
+  },
+  unusualIncreases: [],
+  budget: {
+    hasBudget: true,
+    categoriesOverLimit: 1,
+    categories: [{ category: 'Groceries', limit: 'R3 000.00', spent: 'R3 500.00', status: 'exceeded' }],
+  },
   risk: { level: 'watch', provisional: false, reasons: ['1 budget category is over the limit.'] },
+  debitOrders: { total: 'R1 849.00', count: 3 },
+  goals: { expectedIncome: null, savingsTarget: 'R2 000.00', monthlySpendingTarget: null, savingsTargetMet: true },
+  savingOpportunities: {
+    ifYouTrim: [{ category: 'Eating out', spentThisMonth: 'R640.00', save10PercentPerMonth: 'R64.00', save25PercentPerMonth: 'R160.00', save25PercentPerYear: 'R1 920.00' }],
+    overBudget: [{ category: 'Groceries', overBy: 'R500.00' }],
+  },
+  limitations: ['Only one account is imported.'],
 }
 
 const coachResult = {
@@ -209,6 +279,24 @@ describe('Insights and AI coach', () => {
     expect(calls.find((c) => c.method === 'POST' && c.path === '/api/coach')!.body).toEqual({ month: '2026-09' })
   })
 
+  it('shows the shared data in plain language, never as raw data', async () => {
+    fakeBackend({ ...signedInRoutes, 'GET /api/coach/preview': () => ({ input: coachInput, ai: { available: true } }) })
+    const { container } = renderApp('/coach?month=2026-09')
+    await userEvent.click(await screen.findByText('Exactly what is shared with the AI'))
+    expect(screen.getByText('Your month: September 2026')).toBeInTheDocument()
+    expect(screen.getByText('The whole month')).toBeInTheDocument()
+    expect(screen.getByText('Side hustle & extra income')).toBeInTheDocument()
+    expect(screen.queryByText('Other income')).not.toBeInTheDocument() // R0.00 rows are left out
+    expect(screen.getByText('R1 849.00 across 3')).toBeInTheDocument()
+    expect(screen.getByText(/spent R3 500.00 of R3 000.00 — over the limit/)).toBeInTheDocument()
+    expect(screen.getByText(/R2 000.00 — met/)).toBeInTheDocument()
+    expect(screen.getByText(/10% less saves R64.00 a month/)).toBeInTheDocument()
+    expect(screen.getByText('Only one account is imported.')).toBeInTheDocument()
+    const panel = container.querySelector('.shared-data')!
+    expect(panel.textContent).not.toMatch(/[{}"]|savingsRatePercent|whole_month|exceeded/)
+    expect(panel.querySelector('pre')).toBeNull()
+  })
+
   it('says so when the AI answer could not be verified', async () => {
     fakeBackend({
       ...signedInRoutes,
@@ -257,6 +345,47 @@ describe('Profile & privacy', () => {
     await userEvent.click(screen.getAllByRole('button', { name: 'Delete my account' }).at(-1)!)
     expect(await screen.findByRole('heading', { name: 'Welcome to RandRoute' })).toBeInTheDocument()
     expect(calls.find((c) => c.path === '/api/profile/delete-account')!.body).toEqual({ confirm: 'DELETE', password: 'Passw0rd!' })
+  })
+
+  it('changes the sign-in email after checking the password', async () => {
+    const { calls } = fakeBackend({
+      ...signedInRoutes,
+      'POST /api/profile/change-email': (req) =>
+        (req.body as { password: string }).password === 'wrong'
+          ? apiError(401, 'wrong_password', "That password isn't right.", { password: "That password isn't right." })
+          : { status: 'confirmation_sent', newEmail: 'new@example.com' },
+    })
+    renderApp('/profile')
+    await userEvent.click(await screen.findByRole('button', { name: 'Change email' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Send confirmation link' }))
+    expect(screen.getByText('Enter your new email address.')).toBeInTheDocument()
+    expect(screen.getByText('Enter your password.')).toBeInTheDocument()
+
+    await userEvent.type(screen.getByLabelText('New email address'), testProfile.email!)
+    await userEvent.click(screen.getByRole('button', { name: 'Send confirmation link' }))
+    expect(screen.getByText("That's already your email address.")).toBeInTheDocument()
+    expect(calls.some((c) => c.path === '/api/profile/change-email')).toBe(false)
+
+    await userEvent.clear(screen.getByLabelText('New email address'))
+    await userEvent.type(screen.getByLabelText('New email address'), 'New@Example.com')
+    await userEvent.type(screen.getByLabelText('Your current password'), 'wrong')
+    await userEvent.click(screen.getByRole('button', { name: 'Send confirmation link' }))
+    expect((await screen.findAllByText("That password isn't right.")).length).toBeGreaterThan(0)
+
+    await userEvent.clear(screen.getByLabelText('Your current password'))
+    await userEvent.type(screen.getByLabelText('Your current password'), 'Passw0rd!')
+    await userEvent.click(screen.getByRole('button', { name: 'Send confirmation link' }))
+    expect(await screen.findByText(/sent a confirmation link to/)).toBeInTheDocument()
+    expect(screen.getByText('new@example.com')).toBeInTheDocument()
+    expect(calls.filter((c) => c.path === '/api/profile/change-email').at(-1)!.body).toEqual({ newEmail: 'new@example.com', password: 'Passw0rd!' })
+  })
+
+  it('offers spreadsheet downloads only', async () => {
+    fakeBackend(signedInRoutes)
+    renderApp('/profile')
+    expect(await screen.findByRole('button', { name: 'Download transactions' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download budgets' })).toBeInTheDocument()
+    expect(screen.queryByText(/JSON/)).not.toBeInTheDocument()
   })
 
   it('turns AI explanations on from Profile', async () => {

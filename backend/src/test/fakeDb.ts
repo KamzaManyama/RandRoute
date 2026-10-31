@@ -5,19 +5,33 @@ import { vi } from "vitest";
  * accepted and ignored; awaiting a query resolves to the rows for that table.
  * Inserts, updates, deletes and rpc calls are recorded for assertions.
  */
-export function fakeDb(tables: Record<string, unknown[]>, rpc: Record<string, unknown> = {}) {
+export function fakeDb(tables: Record<string, unknown[]>, rpc: Record<string, unknown> = {}, options: { filter?: boolean } = {}) {
   const writes: { table: string; op: string; value?: unknown }[] = [];
 
   function query(table: string) {
     let op = "select";
     let value: unknown;
+    // With options.filter, eq/lt filters apply to rows that have that column.
+    const filters: ((row: Record<string, unknown>) => boolean)[] = [];
+    const rowsFor = () =>
+      (tables[table] ?? []).filter((row) => filters.every((f) => f(row as Record<string, unknown>)));
     const result = () => {
-      const rows = tables[table] ?? [];
+      const rows = rowsFor();
       return { data: op === "select" ? rows : rows.slice(0, 1), error: null, count: rows.length };
     };
     const chain: Record<string, unknown> = {};
     const passthrough = ["select", "eq", "neq", "gte", "lte", "lt", "gt", "in", "is", "order", "range", "limit", "ilike", "or", "not", "contains"];
     for (const name of passthrough) chain[name] = () => chain;
+    if (options.filter) {
+      chain.eq = (column: string, v: unknown) => {
+        filters.push((row) => !(column in row) || row[column] === v);
+        return chain;
+      };
+      chain.lt = (column: string, v: unknown) => {
+        filters.push((row) => !(column in row) || String(row[column]) < String(v));
+        return chain;
+      };
+    }
     for (const name of ["insert", "update", "delete", "upsert"]) {
       chain[name] = (v?: unknown) => {
         op = name;
@@ -30,7 +44,7 @@ export function fakeDb(tables: Record<string, unknown[]>, rpc: Record<string, un
     chain.maybeSingle = async () =>
       op === "insert" && value && !Array.isArray(value)
         ? { data: { id: `new-${table}`, ...(value as object) }, error: null }
-        : { data: (tables[table] ?? [])[0] ?? null, error: null };
+        : { data: rowsFor()[0] ?? null, error: null };
     chain.single = chain.maybeSingle;
     chain.then = (resolve: (v: unknown) => unknown) => Promise.resolve(result()).then(resolve);
     return chain;

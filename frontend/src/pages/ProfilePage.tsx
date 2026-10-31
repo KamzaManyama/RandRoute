@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/useAuth'
 import { useProfile } from '../auth/profileContext'
 import { useApi } from '../lib/useApi'
@@ -15,14 +15,17 @@ const errorText = (err: unknown, fallback: string) => (err instanceof ApiError ?
 /** Screen 16 — Profile and privacy settings. */
 export function ProfilePage() {
   const { profile } = useProfile()
+  const notice = (useLocation().state as { notice?: string } | null)?.notice
   if (!profile) return <FormAlert>We couldn&apos;t load your profile. Refresh to try again.</FormAlert>
 
   return (
     <div className="page">
       <PageHeader eyebrow="Account" title="Profile & privacy" description={profile.email ?? undefined} />
+      {notice && <FormAlert tone="success">{notice}</FormAlert>}
       <div className="columns">
         <div className="page">
           <DetailsCard key={profile.displayName ?? ''} />
+          <EmailCard />
           <AiCard />
         </div>
         <div className="page">
@@ -90,7 +93,6 @@ function DetailsCard() {
       <h2 className="section-title">Your details</h2>
       {message && <FormAlert tone={message.tone}>{message.text}</FormAlert>}
       <TextField label="Name (optional)" value={name} maxLength={60} onChange={(e) => setName(e.target.value)} error={errors.name} hint="Only used to greet you." />
-      <TextField label="Email" value={profile?.email ?? ''} disabled hint="Your sign-in email." />
       <TextField label="Currency" value="South African rand (ZAR)" disabled />
       <TextField
         label="Usual monthly income after tax (optional)"
@@ -109,6 +111,103 @@ function DetailsCard() {
         </button>
       </div>
     </form>
+  )
+}
+
+/** Change the sign-in email. The change only happens once the new address is confirmed. */
+function EmailCard() {
+  const api = useApi()
+  const { profile } = useProfile()
+  const [open, setOpen] = useState(false)
+  const [newEmail, setNewEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [error, setError] = useState<string | null>(null)
+  const [sentTo, setSentTo] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const current = profile?.email ?? ''
+
+  function start() {
+    setOpen(true)
+    setNewEmail('')
+    setPassword('')
+    setErrors({})
+    setError(null)
+    setSentTo(null)
+  }
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    const next: Record<string, string> = {}
+    const email = newEmail.trim().toLowerCase()
+    if (!email) next.newEmail = 'Enter your new email address.'
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) next.newEmail = 'Enter a valid email address.'
+    else if (email === current.toLowerCase()) next.newEmail = "That's already your email address."
+    if (!password) next.password = 'Enter your password.'
+    setErrors(next)
+    if (Object.keys(next).length) return
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await api.profile.changeEmail(email, password)
+      setSentTo(result.newEmail)
+      setOpen(false)
+    } catch (err) {
+      if (err instanceof ApiError) setErrors(err.fields)
+      setError(errorText(err, 'We could not change your email. Nothing was changed.'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="card stack" aria-labelledby="email-title">
+      <h2 id="email-title" className="section-title">
+        Sign-in email
+      </h2>
+      <p className="email-current">{current || 'No email on this account'}</p>
+      {sentTo && (
+        <FormAlert tone="success">
+          We&apos;ve sent a confirmation link to <strong>{sentTo}</strong>. Your email changes once you open it — until then,
+          keep signing in with {current}. If you also get an email at {current}, open that link too.
+        </FormAlert>
+      )}
+      {open ? (
+        <form className="stack" onSubmit={submit} noValidate>
+          {error && <FormAlert>{error}</FormAlert>}
+          <TextField
+            label="New email address"
+            type="email"
+            autoComplete="email"
+            value={newEmail}
+            onChange={(e) => setNewEmail(e.target.value)}
+            error={errors.newEmail}
+          />
+          <PasswordField
+            label="Your current password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            error={errors.password}
+            hint="So we know it's really you."
+          />
+          <div className="form-actions">
+            <button type="button" className="button button--ghost" onClick={() => setOpen(false)}>
+              Cancel
+            </button>
+            <button type="submit" className="button" disabled={busy}>
+              {busy ? 'Sending…' : 'Send confirmation link'}
+            </button>
+          </div>
+        </form>
+      ) : (
+        <div className="form-actions">
+          <button type="button" className="button button--ghost" onClick={start}>
+            Change email
+          </button>
+        </div>
+      )}
+    </section>
   )
 }
 
@@ -156,18 +255,18 @@ function AiCard() {
 
 function ExportCard() {
   const api = useApi()
-  const [busy, setBusy] = useState<null | 'csv' | 'json'>(null)
+  const [busy, setBusy] = useState<null | 'transactions' | 'budgets'>(null)
   const [error, setError] = useState<string | null>(null)
 
-  async function download(format: 'csv' | 'json') {
-    setBusy(format)
+  async function download(file: 'transactions' | 'budgets') {
+    setBusy(file)
     setError(null)
     try {
-      const blob = await api.profile.export(format)
+      const blob = await api.profile.export(file)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `randroute-${format === 'csv' ? 'transactions' : 'export'}-${new Date().toISOString().slice(0, 10)}.${format}`
+      a.download = `randroute-${file}-${new Date().toISOString().slice(0, 10)}.csv`
       document.body.appendChild(a)
       a.click()
       a.remove()
@@ -182,14 +281,17 @@ function ExportCard() {
   return (
     <section className="card stack">
       <h2 className="section-title">Export your data</h2>
-      <p className="muted">Download what RandRoute has saved for you. PDFs are never stored, so they aren&apos;t included.</p>
+      <p className="muted">
+        Download what RandRoute has saved for you as spreadsheets that open in Excel or Google Sheets. PDFs are never
+        stored, so they aren&apos;t included.
+      </p>
       {error && <FormAlert>{error}</FormAlert>}
       <div className="form-actions">
-        <button type="button" className="button button--ghost" onClick={() => download('csv')} disabled={busy !== null}>
-          {busy === 'csv' ? 'Preparing…' : 'Transactions (CSV)'}
+        <button type="button" className="button button--ghost" onClick={() => download('transactions')} disabled={busy !== null}>
+          {busy === 'transactions' ? 'Preparing…' : 'Download transactions'}
         </button>
-        <button type="button" className="button button--ghost" onClick={() => download('json')} disabled={busy !== null}>
-          {busy === 'json' ? 'Preparing…' : 'Everything (JSON)'}
+        <button type="button" className="button button--ghost" onClick={() => download('budgets')} disabled={busy !== null}>
+          {busy === 'budgets' ? 'Preparing…' : 'Download budgets'}
         </button>
       </div>
     </section>

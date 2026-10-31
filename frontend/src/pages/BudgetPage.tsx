@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useApi, type BudgetView, type LimitStatus } from '../lib/useApi'
 import { ApiError } from '../lib/api'
-import { currentMonth, isMonth, money, monthLabel } from '../lib/format'
+import { currentMonth, isMonth, money, monthLabel, shiftMonth } from '../lib/format'
 import { EmptyState, MonthPicker, PageHeader, ShareBar, Stat, Stats } from '../components/ui'
 import { FormAlert } from '../components/forms'
 
@@ -44,7 +44,7 @@ export function BudgetPage() {
       await api.budgets.copyPrevious(month)
       load()
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : 'We could not copy last month.')
+      setActionError(err instanceof ApiError ? err.message : 'We could not copy your earlier plan.')
     } finally {
       setBusy(false)
     }
@@ -63,6 +63,11 @@ export function BudgetPage() {
         actions={
           <>
             <MonthPicker month={month} onChange={setMonth} />
+            {hasPlan && month === currentMonth() && (
+              <Link to={`/budget?month=${shiftMonth(month, 1)}`} className="button button--ghost">
+                Plan {monthLabel(shiftMonth(month, 1))}
+              </Link>
+            )}
             {hasPlan && (
               <Link to={planLink} className="button">
                 Edit plan
@@ -76,16 +81,22 @@ export function BudgetPage() {
       {actionError && <FormAlert>{actionError}</FormAlert>}
       {loading && <p className="muted" role="status">Loading your budget…</p>}
 
-      {b && !hasPlan && (
+      {b && !hasPlan && b.suggestedPlan && (
+        <SuggestedPlan
+          month={month}
+          plan={b.suggestedPlan}
+          busy={busy}
+          onUse={copyPrevious}
+          adjustLink={planLink}
+          freshLink={`${planLink}&start=empty`}
+        />
+      )}
+
+      {b && !hasPlan && !b.suggestedPlan && (
         <EmptyState
           title={`No budget for ${monthLabel(month)}`}
           action={
             <div className="form-actions">
-              {b.previousMonthHasBudget && (
-                <button type="button" className="button button--ghost" onClick={copyPrevious} disabled={busy}>
-                  Copy last month&apos;s budget
-                </button>
-              )}
               <Link to={planLink} className="button">
                 Create a plan
               </Link>
@@ -188,5 +199,66 @@ export function BudgetPage() {
         </>
       )}
     </div>
+  )
+}
+
+/** Offers the latest earlier plan as the starting point for a month that has none. */
+function SuggestedPlan({
+  month,
+  plan,
+  busy,
+  onUse,
+  adjustLink,
+  freshLink,
+}: {
+  month: string
+  plan: NonNullable<BudgetView['suggestedPlan']>
+  busy: boolean
+  onUse: () => void
+  adjustLink: string
+  freshLink: string
+}) {
+  const planned = plan.limits.reduce((sum, l) => sum + l.limitMinor, 0)
+  const shown = plan.limits.slice(0, 6)
+  return (
+    <section className="card stack suggested-plan" aria-labelledby="suggested-plan-title">
+      <div>
+        <p className="suggested-plan__eyebrow">Suggested for {monthLabel(month)}</p>
+        <h2 id="suggested-plan-title" className="section-title">
+          Use your {monthLabel(plan.fromMonth)} plan again?
+        </h2>
+        <p className="muted">
+          You don&apos;t have a budget for {monthLabel(month)} yet. Start from the plan you made for {monthLabel(plan.fromMonth)} — you can change
+          any limit afterwards.
+        </p>
+      </div>
+      <Stats label={`Your ${monthLabel(plan.fromMonth)} plan`}>
+        <Stat label="Planned spending" value={money(planned)} hint={`${plan.limits.length} categor${plan.limits.length === 1 ? 'y' : 'ies'}`} />
+        <Stat label="Savings target" value={plan.savingsTargetMinor === null ? 'Not set' : money(plan.savingsTargetMinor)} />
+        <Stat label="Expected income" value={plan.expectedIncomeMinor === null ? 'Not set' : money(plan.expectedIncomeMinor)} />
+      </Stats>
+      <ul className="list">
+        {shown.map((l) => (
+          <li key={l.categoryId} className="list-row">
+            <span className="list-row__main">
+              <span className="list-row__title">{l.name}</span>
+            </span>
+            <span className="list-row__value">{money(l.limitMinor)}</span>
+          </li>
+        ))}
+      </ul>
+      {plan.limits.length > shown.length && <p className="muted small">and {plan.limits.length - shown.length} more</p>}
+      <div className="form-actions">
+        <Link to={freshLink} className="button button--ghost">
+          Start from scratch
+        </Link>
+        <Link to={adjustLink} className="button button--ghost">
+          Adjust it first
+        </Link>
+        <button type="button" className="button" onClick={onUse} disabled={busy}>
+          {busy ? 'Copying…' : `Use it for ${monthLabel(month)}`}
+        </button>
+      </div>
+    </section>
   )
 }

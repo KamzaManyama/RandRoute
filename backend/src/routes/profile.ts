@@ -6,6 +6,7 @@ import type { SupabaseClients } from "../lib/supabase.js";
 import { HttpError } from "../middleware/errors.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { formatName } from "../statements/formats.js";
+import { CHANNEL_LABELS, type Channel } from "../statements/channel.js";
 import { REFRESH_COOKIE } from "./auth.js";
 
 /** Bump when the AI explanation text in the app changes, so consent is asked again. */
@@ -24,7 +25,27 @@ const patchSchema = z
   .refine((v) => Object.keys(v).length > 0, { message: "Nothing to update." });
 
 const confirmSchema = z.object({ confirm: z.literal("DELETE", { error: 'Type DELETE to confirm.' }) });
-const deleteAccountSchema = confirmSchema.extend({ password: z.string().min(1, "Enter your password.").max(200) });
+const password = z.string({ error: "Enter your password." }).min(1, "Enter your password.").max(200);
+const deleteAccountSchema = confirmSchema.extend({ password });
+const changeEmailSchema = z.object({
+  newEmail: z
+    .string({ error: "Enter your new email address." })
+    .trim()
+    .toLowerCase()
+    .min(1, { error: "Enter your new email address.", abort: true })
+    .max(254, "Email address is too long.")
+    .pipe(z.email({ error: "Enter a valid email address." })),
+  password,
+});
+
+/** Plain-language names for transaction types in exports. */
+const TYPE_LABELS: Record<string, string> = {
+  income: "Income",
+  expense: "Spending",
+  transfer: "Transfer",
+  refund: "Refund",
+  unknown: "Not sure yet",
+};
 
 function parse<T extends z.ZodType>(schema: T, input: unknown): z.infer<T> {
   const result = schema.safeParse(input ?? {});
@@ -127,10 +148,77 @@ export function profileRouter({ config, supabase }: { config: AppConfig; supabas
     res.json({ profile: await loadProfile(req) });
   });
 
-  /** Download saved records: transactions as CSV, or everything as JSON. */
+  /**
+   * Start an email change. Needs the password again. Supabase emails a
+   * confirmation link to the new address (and, with "secure email change"
+   * on, to the current one too); the sign-in email only changes once the
+   * link is opened.
+   */
+  router.post("/change-email", dangerLimit, async (req, res) => {
+    const body = parse(changeEmailSchema, req.body);
+    const auth = req.auth!;
+    if (!auth.email) throw new HttpError(400, "no_email", "This account has no email to confirm with.");
+    if (body.newEmail === auth.email.toLowerCase()) {
+      throw new HttpError(400, "validation_error", "Please check the highlighted fields.", { newEmail: "That's already your email address." });
+    }
+
+    // A fresh client holds the check session in memory, so updateUser acts as this user.
+    const client = supabase.auth();
+    const check = await client.auth.signInWithPassword({ email: auth.email, password: body.password });
+    if (check.error || !check.data.session) {
+      throw new HttpError(401, "wrong_password", "That password isn't right.", { password: "That password isn't right." });
+    }
+    try {
+      const { error } = await client.auth.updateUser({ email: body.newEmail }, { emailRedirectTo: config.supabase.authRedirectUrl });
+      if (error) {
+        if (error.code === "email_exists" || error.code === "user_already_exists" || error.code === "email_address_invalid") {
+          throw new HttpError(400, "validation_error", "Please check the highlighted fields.", { newEmail: "This email address can't be used." });
+        }
+        if (error.status === 429 || error.code === "over_email_send_rate_limit") {
+          throw new HttpError(429, "rate_limited", "Too many emails sent. Please wait a few minutes and try again.");
+        }
+        console.warn(`[profile] email change failed: ${error.code ?? error.status}`);
+        throw new HttpError(502, "auth_unavailable", "We couldn't change your email right now. Please try again later.");
+      }
+    } finally {
+      // End only the check session; the user's own session stays signed in.
+      await supabase.admin.auth.admin.signOut(check.data.session.access_token, "local").catch(() => undefined);
+    }
+    res.status(202).json({ status: "confirmation_sent", newEmail: body.newEmail });
+  });
+
+  /** Download saved records as spreadsheets (CSV): transactions or budgets. */
   router.get("/export", async (req, res) => {
     const db = req.auth!.db;
-    const format = req.query.format === "json" ? "json" : "csv";
+    const file = req.query.file === "budgets" ? "budgets" : "transactions";
+    const today = new Date().toISOString().slice(0, 10);
+    const sendCsv = (name: string, header: string[], rows: unknown[][]) => {
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="randroute-${name}-${today}.csv"`);
+      res.setHeader("Cache-Control", "no-store");
+      // BOM so Excel opens it as UTF-8.
+      res.send(`﻿${[header, ...rows].map((r) => r.map(csvCell).join(",")).join("\r\n")}\r\n`);
+    };
+    const one = <T,>(v: T | T[] | null | undefined) => (Array.isArray(v) ? v[0] : v) ?? null;
+
+    if (file === "budgets") {
+      const { data, error } = await db
+        .from("monthly_budgets")
+        .select("month, expected_income_minor, savings_target_minor, budget_category_limits(limit_minor, categories(name))")
+        .order("month");
+      if (error) throw dbError("prepare your export");
+      const money = (v: unknown) => (v === null || v === undefined ? "" : rand(Number(v)));
+      const rows: unknown[][] = [];
+      for (const b of (data ?? []) as Record<string, any>[]) {
+        const month = String(b.month).slice(0, 7);
+        const limits = (b.budget_category_limits ?? []) as { limit_minor: number; categories: { name: string } | { name: string }[] | null }[];
+        const base = [money(b.expected_income_minor), money(b.savings_target_minor)];
+        if (!limits.length) rows.push([month, "", "", ...base]);
+        for (const l of limits) rows.push([month, one(l.categories)?.name ?? "Category", rand(Number(l.limit_minor)), ...base]);
+      }
+      sendCsv("budgets", ["Month", "Category", "Limit (R)", "Expected income (R)", "Savings target (R)"], rows);
+      return;
+    }
 
     const transactions: Record<string, any>[] = [];
     for (let from = 0; ; from += 1000) {
@@ -145,63 +233,24 @@ export function profileRouter({ config, supabase }: { config: AppConfig; supabas
       transactions.push(...(data ?? []));
       if (!data || data.length < 1000) break;
     }
-    const one = <T,>(v: T | T[] | null | undefined) => (Array.isArray(v) ? v[0] : v) ?? null;
-    const today = new Date().toISOString().slice(0, 10);
-
-    if (format === "csv") {
-      const header = ["Date", "Description", "Amount (R)", "Direction", "Type", "Channel", "Category", "Account", "Counted in totals", "Note"];
-      const lines = transactions.map((t) => {
-        const source = one(t.statement_sources as { bank_format_key: string; nickname: string | null } | null);
-        const signed = t.direction === "outflow" ? -Number(t.amount_minor) : Number(t.amount_minor);
-        return [
-          t.transaction_date,
-          t.cleaned_description,
-          rand(signed),
-          t.direction === "inflow" ? "Money in" : "Money out",
-          t.transaction_type,
-          t.channel ?? "unknown",
-          one(t.categories as { name: string } | null)?.name ?? "",
-          source ? `${formatName(source.bank_format_key)}${source.nickname ? ` ${source.nickname}` : ""}` : "",
-          t.excluded_from_totals ? "No" : "Yes",
-          t.note ?? "",
-        ]
-          .map(csvCell)
-          .join(",");
-      });
-      res.setHeader("Content-Type", "text/csv; charset=utf-8");
-      res.setHeader("Content-Disposition", `attachment; filename="randroute-transactions-${today}.csv"`);
-      res.setHeader("Cache-Control", "no-store");
-      res.send(`﻿${[header.map(csvCell).join(","), ...lines].join("\r\n")}\r\n`);
-      return;
-    }
-
-    const [profile, imports, budgets] = await Promise.all([
-      loadProfile(req),
-      db.from("statement_imports").select("bank_format_key, period_start, period_end, status, transaction_count, imported_at"),
-      db.from("monthly_budgets").select("month, expected_income_minor, savings_target_minor, budget_category_limits(limit_minor, categories(name))"),
-    ]);
-    if (imports.error || budgets.error) throw dbError("prepare your export");
-
-    res.setHeader("Content-Disposition", `attachment; filename="randroute-export-${today}.json"`);
-    res.setHeader("Cache-Control", "no-store");
-    res.json({
-      exportedAt: new Date().toISOString(),
-      note: "Amounts are in cents (ZAR). Original PDFs are never stored, so they are not included.",
-      profile: { email: profile.email, displayName: profile.displayName, currency: profile.currency },
-      statements: (imports.data ?? []).map((i) => ({ ...i, bank: formatName(i.bank_format_key as string) })),
-      transactions: transactions.map((t) => ({
-        date: t.transaction_date,
-        description: t.cleaned_description,
-        amountMinor: Number(t.amount_minor),
-        direction: t.direction,
-        type: t.transaction_type,
-        channel: t.channel ?? "unknown",
-        category: one(t.categories as { name: string } | null)?.name ?? null,
-        countedInTotals: !t.excluded_from_totals,
-        note: t.note ?? null,
-      })),
-      budgets: budgets.data ?? [],
+    const header = ["Date", "Description", "Amount (R)", "Money in or out", "Type", "How it was paid", "Category", "Account", "Counted in totals", "Note"];
+    const rows = transactions.map((t) => {
+      const source = one(t.statement_sources as { bank_format_key: string; nickname: string | null } | null);
+      const signed = t.direction === "outflow" ? -Number(t.amount_minor) : Number(t.amount_minor);
+      return [
+        t.transaction_date,
+        t.cleaned_description,
+        rand(signed),
+        t.direction === "inflow" ? "Money in" : "Money out",
+        TYPE_LABELS[t.transaction_type as string] ?? "Not sure yet",
+        CHANNEL_LABELS[(t.channel as Channel | null) ?? "unknown"] ?? "Other",
+        one(t.categories as { name: string } | null)?.name ?? "",
+        source ? `${formatName(source.bank_format_key)}${source.nickname ? ` ${source.nickname}` : ""}` : "",
+        t.excluded_from_totals ? "No" : "Yes",
+        t.note ?? "",
+      ];
     });
+    sendCsv("transactions", header, rows);
   });
 
   /** Delete every saved financial record but keep the account. */

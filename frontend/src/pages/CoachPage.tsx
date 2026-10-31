@@ -2,14 +2,15 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useProfile } from '../auth/profileContext'
 import { ApiError } from '../lib/api'
-import { useApi, type CoachResult } from '../lib/useApi'
+import { useApi, type CoachData, type CoachResult } from '../lib/useApi'
 import { currentMonth, isMonth, monthLabel } from '../lib/format'
 import { MonthPicker, PageHeader } from '../components/ui'
 import { FormAlert } from '../components/forms'
-import { AiBadge, AiConsentPanel, AiUnavailableNote, AiVerificationNote, SharedDataDetails } from '../components/ai'
+import { AiBadge, AiConsentPanel, AiUnavailableNote, AiVerificationNote } from '../components/ai'
+import { CoachSharedData } from '../components/sharedData'
 import { HealthBadge } from '../components/health'
 
-type Preview = { month: string; input: Record<string, unknown> | null; aiAvailable: boolean; error: string | null }
+type Preview = { month: string; input: CoachData | null; aiAvailable: boolean; error: string | null }
 type Run =
   | { phase: 'idle' }
   | { phase: 'consent' }
@@ -93,7 +94,6 @@ export function CoachPage() {
   const loading = !preview || preview.month !== month
   const input = loading ? null : preview.input
   const noData = input?.coverage === 'none'
-  const risk = input?.risk as { level?: string } | undefined
 
   return (
     <div className="page">
@@ -111,15 +111,15 @@ export function CoachPage() {
         {input && !noData && (
           <div className="coach-figures" aria-label="Figures the coach will use">
             <span>
-              Money in <strong>{String(input.income)}</strong>
+              Money in <strong>{input.income}</strong>
             </span>
             <span>
-              Money out <strong>{String(input.spending)}</strong>
+              Money out <strong>{input.spending}</strong>
             </span>
             <span>
-              Savings rate <strong>{input.savingsRatePercent === null ? '—' : `${String(input.savingsRatePercent)}%`}</strong>
+              Savings rate <strong>{input.savingsRatePercent === null ? '—' : `${input.savingsRatePercent}%`}</strong>
             </span>
-            {risk?.level && <HealthBadge level={risk.level as never} />}
+            <HealthBadge level={input.risk.level} />
           </div>
         )}
         {input?.coverage === 'partial_month' && (
@@ -149,7 +149,7 @@ export function CoachPage() {
           {(run.phase === 'idle' || run.phase === 'error') && (
             <section className="card stack">
               {run.phase === 'error' && <FormAlert>{run.message}</FormAlert>}
-              <SharedDataDetails data={input} />
+              <CoachSharedData data={input} />
               <div className="form-actions">
                 <button type="button" className="button" onClick={() => void start()}>
                   {run.phase === 'error' ? 'Try again' : `Coach me on ${monthLabel(month)}`}
@@ -204,7 +204,7 @@ function CoachResultView({ result, onAgain }: { result: CoachResult; onAgain: ()
       </section>
 
       <AiVerificationNote verification={result.verification} generatedAt={result.generatedAt} />
-      <SharedDataDetails data={result.basedOn} title="What was shared to write this" />
+      <CoachSharedData data={result.basedOn} title="What was shared to write this" />
       <div className="form-actions">
         <Link to="/budget" className="button button--ghost">
           Review my budget

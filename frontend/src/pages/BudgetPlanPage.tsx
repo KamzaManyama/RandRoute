@@ -31,8 +31,11 @@ export function BudgetPlanPage() {
   const { profile } = useProfile()
   const [params] = useSearchParams()
   const month = isMonth(params.get('month')) ? params.get('month')! : currentMonth()
+  const startEmpty = params.get('start') === 'empty'
 
   const [view, setView] = useState<BudgetView | null>(null)
+  /** Month the form was pre-filled from, when this month had no plan yet. */
+  const [prefilledFrom, setPrefilledFrom] = useState<string | null>(null)
   const [categories, setCategories] = useState<Category[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
   const [income, setIncome] = useState('')
@@ -50,6 +53,20 @@ export function BudgetPlanPage() {
       .then(([v, c]) => {
         setView(v)
         setCategories(c)
+        // No plan yet for this month: start from the latest earlier plan.
+        const suggestion = v.limits.length === 0 && !startEmpty ? v.suggestedPlan : null
+        if (suggestion) {
+          setPrefilledFrom(suggestion.fromMonth)
+          setIncome(toText(v.budget?.expectedIncomeMinor ?? suggestion.expectedIncomeMinor))
+          setSavings(toText(v.budget?.savingsTargetMinor ?? suggestion.savingsTargetMinor ?? profile?.savingsTargetMinor))
+          setRows(
+            suggestion.limits
+              .filter((l) => c.some((cat) => cat.id === l.categoryId)) // skip categories that no longer exist
+              .map((l) => ({ key: nextKey++, categoryId: l.categoryId, amount: toText(l.limitMinor) })),
+          )
+          return
+        }
+        setPrefilledFrom(null)
         setIncome(toText(v.budget?.expectedIncomeMinor))
         setSavings(toText(v.budget?.savingsTargetMinor ?? profile?.savingsTargetMinor))
         setRows(v.limits.map((l) => ({ key: nextKey++, categoryId: l.categoryId, amount: toText(l.limitMinor) })))
@@ -57,7 +74,14 @@ export function BudgetPlanPage() {
       .catch((err: unknown) => setLoadError(err instanceof ApiError ? err.message : 'We could not load this budget.'))
     // profile only seeds the savings field once
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, month])
+  }, [api, month, startEmpty])
+
+  function clearSuggestion() {
+    setPrefilledFrom(null)
+    setRows([])
+    setIncome('')
+    setSavings(toText(profile?.savingsTargetMinor))
+  }
 
   const averages = useMemo(() => new Map((view?.history.averages ?? []).map((a) => [a.categoryId, a.averageMinor])), [view])
   const usable = categories.filter((c) => !['salary', 'other_income', 'transfers', 'refunds'].includes(c.key))
@@ -156,6 +180,17 @@ export function BudgetPlanPage() {
       />
 
       {saveError && <FormAlert>{saveError}</FormAlert>}
+
+      {prefilledFrom && (
+        <div className="preview-banner plan-banner" role="status">
+          <span>
+            We&apos;ve filled this in from your <strong>{monthLabel(prefilledFrom)}</strong> plan. Change anything you like, then save.
+          </span>
+          <button type="button" className="link-button" onClick={clearSuggestion}>
+            Start empty instead
+          </button>
+        </div>
+      )}
 
       <Stats label="Plan totals">
         <Stat label="Planned spending" value={money(planned)} />

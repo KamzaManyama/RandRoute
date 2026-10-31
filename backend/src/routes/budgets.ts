@@ -46,12 +46,30 @@ async function loadBudget(db: SupabaseClient, month: string) {
     .eq("month", `${month}-01`)
     .maybeSingle();
   if (error) throw dbError("load your budget");
-  return data as null | {
-    id: string;
-    expected_income_minor: number | null;
-    savings_target_minor: number | null;
-    budget_category_limits: { category_id: string; limit_minor: number; categories: { name: string } | { name: string }[] | null }[];
-  };
+  return data as null | BudgetRow;
+}
+
+type BudgetRow = {
+  id: string;
+  month: string;
+  expected_income_minor: number | null;
+  savings_target_minor: number | null;
+  budget_category_limits: { category_id: string; limit_minor: number; categories: { name: string } | { name: string }[] | null }[];
+};
+
+const categoryName = (l: BudgetRow["budget_category_limits"][number]) =>
+  (Array.isArray(l.categories) ? l.categories[0] : l.categories)?.name ?? "Category";
+
+/** The most recent plan before `month` that has at least one category limit. */
+async function loadLatestPlanBefore(db: SupabaseClient, month: string): Promise<BudgetRow | null> {
+  const { data, error } = await db
+    .from("monthly_budgets")
+    .select("id, month, expected_income_minor, savings_target_minor, budget_category_limits(category_id, limit_minor, categories(name))")
+    .lt("month", `${month}-01`)
+    .order("month", { ascending: false })
+    .limit(12);
+  if (error) throw dbError("load your earlier budgets");
+  return ((data ?? []) as BudgetRow[]).find((b) => b.budget_category_limits?.length) ?? null;
 }
 
 export function budgetsRouter(supabase: SupabaseClients): Router {
@@ -64,9 +82,9 @@ export function budgetsRouter(supabase: SupabaseClients): Router {
     const month = monthParam(req.params.month);
     const historyStart = shiftMonth(month, -3);
 
-    const [budget, previousBudget, rows, imports] = await Promise.all([
+    const [budget, earlierPlan, rows, imports] = await Promise.all([
       loadBudget(db, month),
-      loadBudget(db, shiftMonth(month, -1)),
+      loadLatestPlanBefore(db, month),
       fetchTransactions(db, { start: monthRange(historyStart).start, end: monthRange(month).end }),
       fetchImports(db),
     ]);
@@ -78,10 +96,9 @@ export function budgetsRouter(supabase: SupabaseClients): Router {
     const limits = (budget?.budget_category_limits ?? [])
       .map((l) => {
         const spent = spentBy.get(l.category_id)?.total ?? 0;
-        const cat = Array.isArray(l.categories) ? l.categories[0] : l.categories;
         return {
           categoryId: l.category_id,
-          name: cat?.name ?? "Category",
+          name: categoryName(l),
           limitMinor: Number(l.limit_minor),
           spentMinor: spent,
           remainingMinor: Number(l.limit_minor) - spent,
@@ -133,7 +150,18 @@ export function budgetsRouter(supabase: SupabaseClients): Router {
         refundsMinor: totals.refunds,
       },
       coverage: coverageFor(month, imports),
-      previousMonthHasBudget: Boolean(previousBudget?.budget_category_limits.length),
+      // When this month has no plan yet, offer the latest earlier one as a starting point.
+      suggestedPlan:
+        limits.length === 0 && earlierPlan
+          ? {
+              fromMonth: String(earlierPlan.month).slice(0, 7),
+              expectedIncomeMinor: earlierPlan.expected_income_minor === null ? null : Number(earlierPlan.expected_income_minor),
+              savingsTargetMinor: earlierPlan.savings_target_minor === null ? null : Number(earlierPlan.savings_target_minor),
+              limits: earlierPlan.budget_category_limits
+                .map((l) => ({ categoryId: l.category_id, name: categoryName(l), limitMinor: Number(l.limit_minor) }))
+                .sort((a, b) => b.limitMinor - a.limitMinor),
+            }
+          : null,
       history: { months: historyMonths.length, averages },
     });
   });
@@ -160,16 +188,16 @@ export function budgetsRouter(supabase: SupabaseClients): Router {
     res.json({ budgetId: data as string });
   });
 
-  /** Copy last month's plan into this month (only if this month has none). */
+  /** Copy the latest earlier plan into this month (only if this month has none). */
   router.post("/:month/copy-previous", async (req, res) => {
     const db = req.auth!.db;
     const month = monthParam(req.params.month);
-    const [current, previous] = await Promise.all([loadBudget(db, month), loadBudget(db, shiftMonth(month, -1))]);
+    const [current, previous] = await Promise.all([loadBudget(db, month), loadLatestPlanBefore(db, month)]);
     if (current?.budget_category_limits.length) {
       throw new HttpError(409, "budget_exists", "This month already has a budget. Edit it instead.");
     }
-    if (!previous?.budget_category_limits.length) {
-      throw new HttpError(404, "no_previous_budget", "Last month has no budget to copy.");
+    if (!previous) {
+      throw new HttpError(404, "no_previous_budget", "There's no earlier budget to copy.");
     }
     const { error } = await db.rpc("save_budget", {
       p_month: `${month}-01`,
@@ -177,8 +205,8 @@ export function budgetsRouter(supabase: SupabaseClients): Router {
       p_savings_target_minor: previous.savings_target_minor,
       p_limits: previous.budget_category_limits.map((l) => ({ category_id: l.category_id, limit_minor: l.limit_minor })),
     });
-    if (error) throw dbError("copy last month's budget");
-    res.status(201).json({ copied: previous.budget_category_limits.length });
+    if (error) throw dbError("copy your earlier budget");
+    res.status(201).json({ copied: previous.budget_category_limits.length, fromMonth: String(previous.month).slice(0, 7) });
   });
 
   /** Remove a month's plan (spending is untouched). */

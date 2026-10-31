@@ -24,7 +24,8 @@ function describeLinkError(params: URLSearchParams): Problem {
 }
 
 /**
- * Landing page for links in Supabase emails (verify email, reset password).
+ * Landing page for links in Supabase emails (verify email, reset password,
+ * change email).
  * Supabase puts the session in the URL fragment (#access_token=...); we read it,
  * wipe it from the address bar and history, then hand it to the backend.
  */
@@ -37,11 +38,13 @@ export function AuthCallbackPage() {
     const accessToken = params.get('access_token')
     const refreshToken = params.get('refresh_token')
     let linkProblem: Problem | null = null
+    // With "secure email change", the first of the two links only carries a message.
+    const halfwayEmailChange = !refreshToken && Boolean(params.get('message')) && !params.get('error')
     if (params.get('error') || params.get('error_code')) linkProblem = describeLinkError(params)
-    else if (!refreshToken && !(params.get('type') === 'recovery' && accessToken)) {
+    else if (!halfwayEmailChange && !refreshToken && !(params.get('type') === 'recovery' && accessToken)) {
       linkProblem = { title: "This link didn't work", message: 'The link is incomplete. Please sign in.', action: 'sign-in' }
     }
-    return { type: params.get('type'), accessToken, refreshToken, linkProblem }
+    return { type: params.get('type'), accessToken, refreshToken, linkProblem, halfwayEmailChange }
   })
   const [sessionProblem, setSessionProblem] = useState<Problem | null>(null)
   const problem = link.linkProblem ?? sessionProblem
@@ -52,7 +55,7 @@ export function AuthCallbackPage() {
     handled.current = true
     // Remove tokens from the address bar so they don't stay in history.
     window.history.replaceState(null, '', window.location.pathname)
-    if (link.linkProblem) return
+    if (link.linkProblem || link.halfwayEmailChange) return
 
     if (link.type === 'recovery' && link.accessToken) {
       setRecoveryToken(link.accessToken)
@@ -62,7 +65,14 @@ export function AuthCallbackPage() {
 
     if (link.refreshToken) {
       startSessionFromLink(link.refreshToken)
-        .then(() => navigate('/', { replace: true, state: { notice: 'Your email is verified. Welcome to RandRoute!' } }))
+        .then(() =>
+          navigate(link.type === 'email_change' ? '/profile' : '/', {
+            replace: true,
+            state: {
+              notice: link.type === 'email_change' ? 'Your sign-in email has been changed.' : 'Your email is verified. Welcome to RandRoute!',
+            },
+          }),
+        )
         .catch((err: unknown) =>
           setSessionProblem({
             title: "This link didn't work",
@@ -72,6 +82,19 @@ export function AuthCallbackPage() {
         )
     }
   }, [link, navigate, setRecoveryToken, startSessionFromLink])
+
+  if (link.halfwayEmailChange) {
+    return (
+      <AuthLayout title="One more step">
+        <FormAlert tone="success">
+          Confirmed. To finish changing your email, open the link we sent to your other email address too.
+        </FormAlert>
+        <Link to="/" className="button button--block">
+          Continue
+        </Link>
+      </AuthLayout>
+    )
+  }
 
   if (!problem) {
     return (

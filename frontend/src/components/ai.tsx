@@ -4,6 +4,7 @@ import { useProfile } from '../auth/profileContext'
 import { useApi, type AiVerification, type BudgetReviewResult } from '../lib/useApi'
 import { ApiError } from '../lib/api'
 import { FormAlert } from './forms'
+import { BudgetSharedData } from './sharedData'
 
 /** What we tell people before they switch AI on. Keep in step with AI_POLICY_VERSION on the backend. */
 export function AiPolicyText() {
@@ -81,51 +82,6 @@ export function AiVerificationNote({ verification, generatedAt }: { verification
   )
 }
 
-const LABELS: Record<string, string> = {
-  month: 'Month',
-  currency: 'Currency',
-  coverage: 'Statement coverage',
-  income: 'Money in',
-  incomeBreakdown: 'Income breakdown',
-  incomeNotYetMarked: 'Money in not yet marked as income',
-  spending: 'Money out',
-  net: 'Net cash flow',
-  savingsRatePercent: 'Savings rate (%)',
-  topCategories: 'Top categories',
-  monthOverMonth: 'Compared with last month',
-  unusualIncreases: 'Unusual increases',
-  budget: 'Budget status',
-  risk: 'Money health',
-  debitOrders: 'Debit orders',
-  goals: 'Your goals',
-  savingOpportunities: 'Saving opportunities',
-  limitations: 'Limitations',
-  expectedIncome: 'Expected income',
-  savingsTarget: 'Savings target',
-  totalPlanned: 'Total planned',
-  plannedPlusSavings: 'Planned plus savings',
-  leftOverAfterPlanAndSavings: 'Left over',
-  categories: 'Categories',
-}
-
-/** Exactly what was (or will be) sent to the AI, in a collapsible panel. */
-export function SharedDataDetails({ data, title = 'Exactly what is shared with the AI' }: { data: Record<string, unknown>; title?: string }) {
-  return (
-    <details className="shared-data">
-      <summary>{title}</summary>
-      <dl>
-        {Object.entries(data).map(([key, value]) => (
-          <div key={key} className="shared-data__row">
-            <dt>{LABELS[key] ?? key}</dt>
-            <dd>{typeof value === 'object' && value !== null ? <pre>{JSON.stringify(value, null, 2)}</pre> : String(value ?? '—')}</dd>
-          </div>
-        ))}
-      </dl>
-      <p className="muted small">No transaction descriptions, dates of single purchases, account numbers, names or emails.</p>
-    </details>
-  )
-}
-
 /** The AI's review of a draft budget plan. */
 export function BudgetReviewCard({ result }: { result: BudgetReviewResult }) {
   return (
@@ -142,7 +98,7 @@ export function BudgetReviewCard({ result }: { result: BudgetReviewResult }) {
       </ul>
       <p className="muted small">Suggestions only — nothing in your plan has been changed.</p>
       <AiVerificationNote verification={result.verification} generatedAt={result.generatedAt} />
-      <SharedDataDetails data={result.basedOn} title="What was shared" />
+      <BudgetSharedData data={result.basedOn} />
     </section>
   )
 }

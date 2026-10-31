@@ -993,7 +993,7 @@ textarea.field__input {
 }
 
 .shared-data {
-  border: 1px dashed var(--color-border);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   padding: var(--space-3) var(--space-4);
   background: var(--color-surface-muted);
@@ -1004,33 +1004,76 @@ textarea.field__input {
   font-weight: 600;
 }
 
-.shared-data dl {
+.shared-data__body {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+.shared-data__section {
   display: grid;
   gap: var(--space-2);
-  margin: var(--space-3) 0 0;
 }
 
-.shared-data__row {
-  display: grid;
-  grid-template-columns: minmax(110px, 1fr) 2fr;
-  gap: var(--space-3);
-  font-size: 0.88rem;
-}
-
-.shared-data dt {
+.shared-data__heading {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   color: var(--color-muted);
 }
 
-.shared-data dd {
+.shared-data__rows {
+  display: grid;
   margin: 0;
-  min-width: 0;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
 }
 
-.shared-data pre {
+.shared-data__row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  font-size: 0.9rem;
+}
+
+.shared-data__row + .shared-data__row {
+  border-top: 1px solid var(--color-border);
+}
+
+.shared-data__row dt {
+  color: var(--color-muted);
+}
+
+.shared-data__row dd {
   margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 0.8rem;
+  font-weight: 600;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.shared-data__items {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding-left: 1.2rem;
+  font-size: 0.9rem;
+}
+
+.shared-data__line {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.shared-data__never {
+  margin: var(--space-4) 0 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+  font-size: 0.85rem;
+  color: var(--color-muted);
 }
 
 /* ---- Money health ---- */
@@ -1290,4 +1333,33 @@ textarea.field__input {
 
 .legal-links a:hover {
   color: var(--color-ink);
+}
+
+/* ---- Suggested budget (carried forward from an earlier month) ---- */
+.suggested-plan {
+  border-color: var(--color-accent);
+}
+
+.suggested-plan__eyebrow {
+  margin: 0 0 var(--space-1);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.plan-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+/* ---- Profile: sign-in email ---- */
+.email-current {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
 }

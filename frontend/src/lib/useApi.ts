@@ -196,7 +196,13 @@ export type BudgetView = {
   unbudgeted: { categoryId: string | null; name: string; spentMinor: number }[]
   totals: { plannedMinor: number; spentInBudgetMinor: number; remainingMinor: number; totalSpendingMinor: number; refundsMinor: number }
   coverage: Coverage
-  previousMonthHasBudget: boolean
+  /** The latest earlier plan, offered when this month has none. */
+  suggestedPlan: {
+    fromMonth: string
+    expectedIncomeMinor: number | null
+    savingsTargetMinor: number | null
+    limits: { categoryId: string; name: string; limitMinor: number }[]
+  } | null
   history: { months: number; averages: { categoryId: string; name: string; averageMinor: number }[] }
 }
 
@@ -270,10 +276,55 @@ export type CoachAnswer = {
   motivation: string
 }
 
+/** The summary the coach sends to AI. Amounts are already formatted (e.g. "R1 250.00"). Mirrors backend/src/ai/coachInput.ts. */
+export type CoachData = {
+  month: string
+  currency: 'ZAR'
+  coverage: 'whole_month' | 'partial_month' | 'none'
+  income: string
+  incomeBreakdown: { salary: string; sideIncome: string; other: string }
+  incomeNotYetMarked: string
+  spending: string
+  net: string
+  savingsRatePercent: number | null
+  topCategories: { category: string; amount: string; sharePercent: number | null }[]
+  monthOverMonth: {
+    available: boolean
+    spendingChangePercent: number | null
+    biggestChanges: { category: string; thisMonth: string; lastMonth: string; changePercent: number | null }[]
+  }
+  unusualIncreases: { category: string; thisMonth: string; usualAverage: string }[]
+  budget: {
+    hasBudget: boolean
+    categoriesOverLimit: number
+    categories: { category: string; limit: string; spent: string; status: LimitStatus }[]
+  }
+  risk: { level: 'healthy' | 'watch' | 'at_risk' | 'not_enough_data'; provisional: boolean; reasons: string[] }
+  debitOrders: { total: string; count: number }
+  goals: { expectedIncome: string | null; savingsTarget: string | null; monthlySpendingTarget: string | null; savingsTargetMet: boolean | null }
+  savingOpportunities: {
+    ifYouTrim: { category: string; spentThisMonth: string; save10PercentPerMonth: string; save25PercentPerMonth: string; save25PercentPerYear: string }[]
+    overBudget: { category: string; overBy: string }[]
+  }
+  limitations: string[]
+}
+
+/** The summary sent when AI reviews a draft budget. */
+export type BudgetReviewData = {
+  month: string
+  /** Formatted rand, or "not set". */
+  expectedIncome: string
+  savingsTarget: string
+  totalPlanned: string
+  plannedPlusSavings: string
+  leftOverAfterPlanAndSavings: string
+  categories: { category: string; limit: string; recentMonthlyAverage: string }[]
+}
+
 export type CoachResult = {
   coach: CoachAnswer
   verification: AiVerification
-  basedOn: Record<string, unknown>
+  basedOn: CoachData
   generatedAt: string
   source: 'ai_generated'
 }
@@ -281,7 +332,7 @@ export type CoachResult = {
 export type BudgetReviewResult = {
   review: { summary: string; suggestions: string[] }
   verification: AiVerification
-  basedOn: Record<string, unknown>
+  basedOn: BudgetReviewData
   generatedAt: string
   source: 'ai_generated'
 }
@@ -314,7 +365,7 @@ export function useApi() {
       budgets: {
         get: (month: string) => authRequest<BudgetView>(`/api/budgets/${month}`),
         save: (month: string, draft: BudgetDraft) => authRequest<{ budgetId: string }>(`/api/budgets/${month}`, { method: 'PUT', body: draft }),
-        copyPrevious: (month: string) => authRequest<{ copied: number }>(`/api/budgets/${month}/copy-previous`, { method: 'POST' }),
+        copyPrevious: (month: string) => authRequest<{ copied: number; fromMonth: string }>(`/api/budgets/${month}/copy-previous`, { method: 'POST' }),
         remove: (month: string) => authRequest<null>(`/api/budgets/${month}`, { method: 'DELETE' }),
       },
 
@@ -332,7 +383,9 @@ export function useApi() {
           authRequest<{ profile: ProfileData }>('/api/profile', { method: 'PATCH', body: patch }).then((r) => r.profile),
         setAiConsent: (granted: boolean) =>
           authRequest<{ profile: ProfileData }>('/api/profile/ai-consent', { method: 'POST', body: { granted } }).then((r) => r.profile),
-        export: (format: 'csv' | 'json') => authRequest<Blob>(`/api/profile/export?format=${format}`, { responseType: 'blob' }),
+        changeEmail: (newEmail: string, password: string) =>
+          authRequest<{ status: 'confirmation_sent'; newEmail: string }>('/api/profile/change-email', { method: 'POST', body: { newEmail, password } }),
+        export: (file: 'transactions' | 'budgets') => authRequest<Blob>(`/api/profile/export?file=${file}`, { responseType: 'blob' }),
         deleteData: () => authRequest<null>('/api/profile/delete-data', { method: 'POST', body: { confirm: 'DELETE' } }),
         deleteAccount: (password: string) =>
           authRequest<null>('/api/profile/delete-account', { method: 'POST', body: { confirm: 'DELETE', password } }),
@@ -341,7 +394,7 @@ export function useApi() {
       insights: {
         get: (month: string) => authRequest<{ insights: Insights; ai: { available: boolean } }>(`/api/insights?month=${month}`),
         coachPreview: (month: string) =>
-          authRequest<{ input: Record<string, unknown>; ai: { available: boolean } }>(`/api/coach/preview?month=${month}`),
+          authRequest<{ input: CoachData; ai: { available: boolean } }>(`/api/coach/preview?month=${month}`),
         coach: (month: string) => authRequest<CoachResult>('/api/coach', { method: 'POST', body: { month } }),
         budgetSuggestions: (
           month: string,

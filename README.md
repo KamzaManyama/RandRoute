@@ -514,7 +514,7 @@ This section defines expected behaviour for the 16 primary screen groups. These 
 **Interactions**
 - Add/edit a category limit.
 - Remove a category from the plan.
-- Copy a previous month's budget.
+- When a month has no plan, the latest earlier plan is suggested ("Use your August plan again?"): use it as is, adjust it first, or start from scratch. The current month's page links to planning next month.
 - Select a category to inspect contributing transactions.
 - Open Screen 13 to plan or revise a budget.
 
@@ -543,6 +543,7 @@ This section defines expected behaviour for the 16 primary screen groups. These 
 - Preview the proposed plan.
 - Save or cancel.
 - Optionally request AI suggestions; this must be an explicit action.
+- For a month with no plan, the form is pre-filled from the latest earlier plan, with a note saying so and a "Start empty instead" option.
 
 **Rules**
 - Calculations are performed by application code, not Gemini.
@@ -605,6 +606,8 @@ This section defines expected behaviour for the 16 primary screen groups. These 
 6. If the summary itself fails, the model is asked once more with a stricter reminder; if it fails again, the user sees "couldn't be checked against your figures" and nothing unverified is shown.
 7. The answer is labelled **Written by AI**, with how many figures were checked, how many points were removed, and the exact data shared.
 
+"Exactly what is shared" is written out in plain language (sections such as *Your month*, *Where your money went*, *Budget*, *Your goals*), never as raw data. Every figure shown is exactly what is sent.
+
 **Rules**
 - Gemini is never the calculator or source of truth. Totals, savings rate and money health come from fixed app rules.
 - Never expose the API key in the browser.
@@ -619,12 +622,12 @@ This section defines expected behaviour for the 16 primary screen groups. These 
 **Purpose:** Manage account access, preferences, AI consent, and personal data.
 
 **Content**
-- Email/account settings.
+- Sign-in email, with **Change email**: needs the current password; Supabase emails a confirmation link to the new address (and to the current one when "Secure email change" is on). The email only changes once the link is opened, and the link lands on `/auth/callback`.
 - Password/security controls supported by the auth provider.
 - Currency and display preferences.
 - Source labels/nicknames.
 - AI consent status and explanation.
-- Export saved financial records.
+- Export saved financial records as spreadsheets (CSV that opens in Excel or Google Sheets): transactions and budgets, with plain-language column values.
 - Delete an individual import.
 - Delete all saved financial records.
 - Delete account.
@@ -633,7 +636,8 @@ This section defines expected behaviour for the 16 primary screen groups. These 
 **Interactions**
 - Update supported account preferences.
 - Enable/withdraw AI consent.
-- Request an export.
+- Download transactions or budgets.
+- Change the sign-in email.
 - Delete an import or all financial records with explicit confirmation.
 - Start account deletion.
 

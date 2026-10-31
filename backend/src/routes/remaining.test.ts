@@ -40,9 +40,10 @@ const groundedAnswer = {
   motivation: "You're off to a strong start.",
 };
 
-function build({ aiEnabled = true, data = tables(), password = "right" } = {}) {
+function build({ aiEnabled = true, data = tables(), password = "right", filter = false, updateUserError = null as null | { code?: string; status?: number } } = {}) {
   const config = loadConfig({ ...baseEnv, AI_ENABLED: aiEnabled ? "true" : "false", GEMINI_API_KEY: aiEnabled ? "key" : "" });
-  const { db, writes } = fakeDb(data, { delete_all_financial_records: null });
+  const { db, writes } = fakeDb(data, { delete_all_financial_records: null, save_budget: "b-new" }, { filter });
+  const updateUser = vi.fn(async (..._args: unknown[]) => ({ data: { user: USER }, error: updateUserError }));
   const adminAuth = { signOut: vi.fn(async () => ({ error: null })), deleteUser: vi.fn(async () => ({ error: null })), updateUserById: vi.fn(async () => ({ error: null })) };
   const supabase = {
     auth: () => ({
@@ -50,6 +51,7 @@ function build({ aiEnabled = true, data = tables(), password = "right" } = {}) {
         getUser: async () => ({ data: { user: USER }, error: null }),
         signInWithPassword: async ({ password: p }: { password: string }) =>
           p === password ? { data: { session: { access_token: "check" } }, error: null } : { data: { session: null }, error: { code: "invalid_credentials" } },
+        updateUser,
       },
     }),
     forUser: () => db,
@@ -60,7 +62,7 @@ function build({ aiEnabled = true, data = tables(), password = "right" } = {}) {
   const app = createApp({ config, supabase, gemini });
   const call = (method: "get" | "post" | "put", path: string) =>
     request(app)[method](path).set("X-RandRoute-Client", "web").set("Authorization", "Bearer t");
-  return { call, generateJson, writes, db, adminAuth };
+  return { call, generateJson, writes, db, adminAuth, updateUser };
 }
 
 describe("saving opportunities (calculated by the app)", () => {
@@ -220,11 +222,73 @@ describe("profile", () => {
         transactions: [{ transaction_date: "2026-09-02", cleaned_description: "=HYPERLINK(\"x\")", amount_minor: 45000, direction: "outflow", transaction_type: "expense", excluded_from_totals: false, note: null, categories: { name: "Groceries" }, statement_sources: null }],
       }),
     });
-    const res = await call("get", "/api/profile/export?format=csv");
+    const res = await call("get", "/api/profile/export?file=transactions");
     expect(res.status).toBe(200);
-    expect(res.headers["content-disposition"]).toMatch(/attachment; filename="randroute-transactions-/);
+    expect(res.headers["content-disposition"]).toMatch(/attachment; filename="randroute-transactions-.*\.csv"/);
     expect(res.text).toContain(`"'=HYPERLINK(""x"")"`);
     expect(res.text).toContain(`"-450.00"`);
+    // Plain words, not internal codes.
+    expect(res.text).toContain(`"Spending"`);
+    expect(res.text).toContain(`"Other"`);
+    expect(res.text).not.toContain("expense");
+  });
+
+  it("exports budgets as a spreadsheet, one row per category limit", async () => {
+    const { call } = build({
+      data: tables({
+        monthly_budgets: [
+          { month: "2026-09-01", expected_income_minor: 2500000, savings_target_minor: null, budget_category_limits: [{ limit_minor: 300000, categories: { name: "Groceries" } }, { limit_minor: 100000, categories: [{ name: "Transport & fuel" }] }] },
+        ],
+      }),
+    });
+    const res = await call("get", "/api/profile/export?file=budgets");
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/text\/csv/);
+    expect(res.headers["content-disposition"]).toMatch(/randroute-budgets-.*\.csv/);
+    const lines = res.text.replace(/^\uFEFF/, "").trim().split("\r\n");
+    expect(lines[0]).toBe(`"Month","Category","Limit (R)","Expected income (R)","Savings target (R)"`);
+    expect(lines[1]).toBe(`"2026-09","Groceries","3000.00","25000.00",""`);
+    expect(lines[2]).toBe(`"2026-09","Transport & fuel","1000.00","25000.00",""`);
+  });
+
+  it("no longer offers a JSON export", async () => {
+    const { call } = build();
+    const res = await call("get", "/api/profile/export?format=json");
+    expect(res.headers["content-type"]).toMatch(/text\/csv/);
+  });
+
+  it("changes the email only after the password is confirmed", async () => {
+    const { call, updateUser, adminAuth } = build();
+    const wrong = await call("post", "/api/profile/change-email").send({ newEmail: "new@example.com", password: "nope" });
+    expect(wrong.status).toBe(401);
+    expect(wrong.body.error.fields.password).toMatch(/isn't right/);
+    expect(updateUser).not.toHaveBeenCalled();
+
+    const ok = await call("post", "/api/profile/change-email").send({ newEmail: "  New@Example.com ", password: "right" });
+    expect(ok.status).toBe(202);
+    expect(ok.body).toEqual({ status: "confirmation_sent", newEmail: "new@example.com" });
+    expect(updateUser).toHaveBeenCalledWith({ email: "new@example.com" }, expect.objectContaining({ emailRedirectTo: expect.any(String) }));
+    // Only the temporary check session is ended, never the user's own sessions.
+    expect(adminAuth.signOut).toHaveBeenCalledWith("check", "local");
+  });
+
+  it("rejects an invalid or unchanged email before checking the password", async () => {
+    const { call, updateUser } = build();
+    const bad = await call("post", "/api/profile/change-email").send({ newEmail: "not-an-email", password: "right" });
+    expect(bad.status).toBe(400);
+    expect(bad.body.error.fields.newEmail).toMatch(/valid email/);
+    const same = await call("post", "/api/profile/change-email").send({ newEmail: "Maredi@Example.com", password: "right" });
+    expect(same.status).toBe(400);
+    expect(same.body.error.fields.newEmail).toMatch(/already your email/);
+    expect(updateUser).not.toHaveBeenCalled();
+  });
+
+  it("explains when the new email can't be used", async () => {
+    const { call, adminAuth } = build({ updateUserError: { code: "email_exists", status: 422 } });
+    const res = await call("post", "/api/profile/change-email").send({ newEmail: "taken@example.com", password: "right" });
+    expect(res.status).toBe(400);
+    expect(res.body.error.fields.newEmail).toMatch(/can't be used/);
+    expect(adminAuth.signOut).toHaveBeenCalledWith("check", "local");
   });
 
   it("needs DELETE typed to delete all financial data", async () => {
@@ -243,6 +307,59 @@ describe("profile", () => {
     const ok = await call("post", "/api/profile/delete-account").send({ confirm: "DELETE", password: "right" });
     expect(ok.status).toBe(204);
     expect(adminAuth.deleteUser).toHaveBeenCalledWith("user-1");
+  });
+
+  it("suggests the latest earlier plan for a month that has none", async () => {
+    const plan = (month: string, limit: number) => ({
+      id: `b-${month}`,
+      month: `${month}-01`,
+      expected_income_minor: 2500000,
+      savings_target_minor: 200000,
+      budget_category_limits: [{ category_id: "cat-g", limit_minor: limit, categories: { name: "Groceries" } }],
+    });
+    // Newest first, as the query orders them. July is older than August.
+    const { call } = build({ filter: true, data: tables({ monthly_budgets: [plan("2026-08", 300000), plan("2026-07", 250000)] }) });
+    const res = await call("get", "/api/budgets/2026-10");
+    expect(res.status).toBe(200);
+    expect(res.body.limits).toEqual([]);
+    expect(res.body.suggestedPlan).toEqual({
+      fromMonth: "2026-08",
+      expectedIncomeMinor: 2500000,
+      savingsTargetMinor: 200000,
+      limits: [{ categoryId: "cat-g", name: "Groceries", limitMinor: 300000 }],
+    });
+
+    // A month that already has a plan gets no suggestion.
+    const planned = await call("get", "/api/budgets/2026-08");
+    expect(planned.body.limits).toHaveLength(1);
+    expect(planned.body.suggestedPlan).toBeNull();
+  });
+
+  it("copies the latest earlier plan, even when it is older than last month", async () => {
+    const { call, db } = build({
+      filter: true,
+      data: tables({
+        monthly_budgets: [
+          { id: "b-07", month: "2026-07-01", expected_income_minor: null, savings_target_minor: 150000, budget_category_limits: [{ category_id: "cat-g", limit_minor: 280000, categories: { name: "Groceries" } }] },
+        ],
+      }),
+    });
+    const res = await call("post", "/api/budgets/2026-10/copy-previous");
+    expect(res.status).toBe(201);
+    expect(res.body).toEqual({ copied: 1, fromMonth: "2026-07" });
+    expect(db.rpc).toHaveBeenCalledWith("save_budget", {
+      p_month: "2026-10-01",
+      p_expected_income_minor: null,
+      p_savings_target_minor: 150000,
+      p_limits: [{ category_id: "cat-g", limit_minor: 280000 }],
+    });
+  });
+
+  it("says when there is no earlier plan to copy", async () => {
+    const { call } = build({ filter: true });
+    const res = await call("post", "/api/budgets/2026-10/copy-previous");
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe("no_previous_budget");
   });
 
   it("validates budget amounts", async () => {
