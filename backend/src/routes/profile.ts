@@ -1,5 +1,4 @@
 import { Router, type Request } from "express";
-import { rateLimit } from "express-rate-limit";
 import { z } from "zod";
 import type { AppConfig } from "../config/env.js";
 import type { SupabaseClients } from "../lib/supabase.js";
@@ -7,7 +6,8 @@ import { HttpError } from "../middleware/errors.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { formatName } from "../statements/formats.js";
 import { CHANNEL_LABELS, type Channel } from "../statements/channel.js";
-import { REFRESH_COOKIE } from "./auth.js";
+import type { SessionCookies } from "../lib/sessionCookies.js";
+import { limiter, requireCsrf, securityLog, WINDOWS } from "../middleware/security.js";
 
 /** Bump when the AI explanation text in the app changes, so consent is asked again. */
 export const AI_POLICY_VERSION = "2026-11";
@@ -67,18 +67,14 @@ function csvCell(value: unknown): string {
 
 const rand = (minorValue: number) => (minorValue / 100).toFixed(2);
 
-export function profileRouter({ config, supabase }: { config: AppConfig; supabase: SupabaseClients }): Router {
+export function profileRouter({ config, supabase, cookies }: { config: AppConfig; supabase: SupabaseClients; cookies: SessionCookies }): Router {
   const router = Router();
   router.use(requireAuth(supabase));
 
-  const dangerLimit = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    limit: 10,
-    standardHeaders: "draft-8",
-    legacyHeaders: false,
-    keyGenerator: (req) => req.auth?.userId ?? "anon",
-    handler: (_req, _res, next) => next(new HttpError(429, "rate_limited", "Too many attempts. Please wait a few minutes.")),
-  });
+  // SECURITY.md 15.1 — per-user limits on account-level actions.
+  const deletionLimit = limiter({ name: "account_deletion", windowMs: WINDOWS.DAY, limit: 5, by: "user", message: "Too many delete requests today. Please try again tomorrow." });
+  const emailChangeLimit = limiter({ name: "email_change", windowMs: WINDOWS.HOUR, limit: 5, by: "user", message: "Too many attempts. Please wait an hour and try again." });
+  const exportLimit = limiter({ name: "export", windowMs: WINDOWS.HOUR, limit: 10, by: "user", message: "Too many downloads. Please wait a while and try again." });
 
   async function loadProfile(req: Request) {
     const { data, error } = await req.auth!.db
@@ -154,7 +150,7 @@ export function profileRouter({ config, supabase }: { config: AppConfig; supabas
    * on, to the current one too); the sign-in email only changes once the
    * link is opened.
    */
-  router.post("/change-email", dangerLimit, async (req, res) => {
+  router.post("/change-email", emailChangeLimit, async (req, res) => {
     const body = parse(changeEmailSchema, req.body);
     const auth = req.auth!;
     if (!auth.email) throw new HttpError(400, "no_email", "This account has no email to confirm with.");
@@ -166,6 +162,7 @@ export function profileRouter({ config, supabase }: { config: AppConfig; supabas
     const client = supabase.auth();
     const check = await client.auth.signInWithPassword({ email: auth.email, password: body.password });
     if (check.error || !check.data.session) {
+      securityLog("password_check_failed", req);
       throw new HttpError(401, "wrong_password", "That password isn't right.", { password: "That password isn't right." });
     }
     try {
@@ -188,7 +185,8 @@ export function profileRouter({ config, supabase }: { config: AppConfig; supabas
   });
 
   /** Download saved records as spreadsheets (CSV): transactions or budgets. */
-  router.get("/export", async (req, res) => {
+  // Exports need the CSRF token too, even though they are GET requests (SECURITY.md 7.3).
+  router.get("/export", exportLimit, requireCsrf(cookies.names.csrf, { always: true }), async (req, res) => {
     const db = req.auth!.db;
     const file = req.query.file === "budgets" ? "budgets" : "transactions";
     const today = new Date().toISOString().slice(0, 10);
@@ -254,7 +252,7 @@ export function profileRouter({ config, supabase }: { config: AppConfig; supabas
   });
 
   /** Delete every saved financial record but keep the account. */
-  router.post("/delete-data", dangerLimit, async (req, res) => {
+  router.post("/delete-data", deletionLimit, async (req, res) => {
     parse(confirmSchema, req.body);
     const { error } = await req.auth!.db.rpc("delete_all_financial_records");
     if (error) throw dbError("delete your financial data");
@@ -262,13 +260,14 @@ export function profileRouter({ config, supabase }: { config: AppConfig; supabas
   });
 
   /** Delete the account and everything in it. Needs the password again. */
-  router.post("/delete-account", dangerLimit, async (req, res) => {
+  router.post("/delete-account", deletionLimit, async (req, res) => {
     const body = parse(deleteAccountSchema, req.body);
     const auth = req.auth!;
     if (!auth.email) throw new HttpError(400, "no_email", "This account has no email to confirm with.");
 
     const check = await supabase.auth().auth.signInWithPassword({ email: auth.email, password: body.password });
     if (check.error || !check.data.session) {
+      securityLog("password_check_failed", req);
       throw new HttpError(401, "wrong_password", "That password isn't right.", { password: "That password isn't right." });
     }
     // Sign-in check created a session; end it straight away.
@@ -283,7 +282,7 @@ export function profileRouter({ config, supabase }: { config: AppConfig; supabas
       throw dbError("delete your account");
     }
 
-    res.clearCookie(REFRESH_COOKIE, { httpOnly: true, secure: config.cookies.secure, sameSite: config.cookies.sameSite, path: "/api/auth" });
+    cookies.clear(res);
     res.status(204).end();
   });
 

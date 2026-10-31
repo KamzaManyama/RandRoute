@@ -141,13 +141,13 @@ The visual style follows [`design.jpg`](design.jpg): a soft light-grey backgroun
 - **AI:** Gemini, called only from the backend, only after an explicit user action.
 
 ```text
-Browser (frontend) ──HTTPS + Bearer token──► Backend API ──► Supabase (Auth + Postgres with RLS)
+Browser (frontend) ──HTTPS + HttpOnly cookies──► Backend API ──► Supabase (Auth + Postgres with RLS)
                                                          └──► Gemini (optional, server-side only)
 ```
 
 How the backend talks to Supabase:
 
-- **Auth:** register, sign-in, refresh, and password recovery go through backend endpoints that call Supabase Auth. The frontend stores the returned session and sends `Authorization: Bearer <access token>` on each request.
+- **Auth:** register, sign-in, refresh, and password recovery go through backend endpoints that call Supabase Auth. The backend puts the session in **HttpOnly cookies**; the browser's JavaScript never sees an access or refresh token, user ID, or email in an auth response, and no `Authorization` header is sent. See **Security controls** below.
 - **User data:** for each request the backend builds a Supabase client with the user's access token, so Postgres row-level security applies to every query.
 - **Admin-only tasks** (for example account deletion) use the service-role key, which exists only in backend environment variables.
 
@@ -600,7 +600,7 @@ This section defines expected behaviour for the 16 primary screen groups. These 
 **Request flow**
 1. Opening the page calls `GET /api/coach/preview`, which shows **exactly** what would be shared. No AI call.
 2. User presses **Coach me on <month>**; consent is asked in place if needed.
-3. Server checks authentication, AI consent (current policy version), the daily limit (20 per user), and that the month has imported data.
+3. Server checks authentication, finished setup, AI consent (current policy version), the AI limits (5 a day per user, 1 every 10 minutes after an answer, plus per-IP and service-wide caps), and that the month has imported data.
 4. `buildCoachInput` (backend/src/ai/coachInput.ts) builds the summary and validates it against a **strict whitelist schema**: formatted rand strings, category totals and shares, savings rate, money-health level and reasons, budget status, month-over-month change, debit-order total, the user's goals, saving opportunities, limitations. Unknown fields are rejected, so descriptions, single-transaction dates, account numbers, names and emails can't be sent.
 5. Gemini answers in JSON. The server validates the shape, then runs the **grounding check** (backend/src/ai/grounding.ts): every rand amount and percentage must be one the app sent (rounding to the nearest rand/percent is allowed). Points with invented or recalculated figures, or off-limits advice (crypto, loans, "current balance"…), are removed.
 6. If the summary itself fails, the model is asked once more with a stricter reminder; if it fails again, the user sees "couldn't be checked against your figures" and nothing unverified is shown.
@@ -809,6 +809,57 @@ Bank statements are highly sensitive. Privacy is a core product requirement, not
 - Recalculate or invalidate derived summaries after deletion.
 - Explain applicable infrastructure backup retention; do not promise instant deletion from all backups unless verified.
 
+### Security controls (how SECURITY.md is implemented)
+
+**Sessions** — [backend/src/lib/sessionCookies.ts](backend/src/lib/sessionCookies.ts)
+
+| Cookie | Holds | Path | Lifetime |
+| --- | --- | --- | --- |
+| `__Host-rr_access` (`rr_access` locally) | Supabase access token | `/` | token lifetime (about 1 hour) |
+| `rr_refresh` | Supabase refresh token (rotated on every refresh) | `/api/auth` | 30 days |
+| `__Host-rr_csrf` (`rr_csrf` locally) | CSRF secret | `/` | 30 days |
+| `rr_recovery` | password-reset token from an email link | `/api/auth` | 15 minutes |
+
+All are `HttpOnly`, `Secure` in production (the backend refuses to start in production otherwise) and `SameSite=Strict` (`COOKIE_SAMESITE=lax` is the only alternative). Logout revokes the session in Supabase and clears every cookie. The backend reads the session only from the cookie; Bearer headers are ignored. Auth responses carry only `{ signedIn, user: { displayName } }`. The sign-in email appears only on the Profile screen (`GET /api/profile`), where it is shown to its owner.
+
+**Email links** — the safest setup uses one-time `token_hash` links, so no session token is ever put in a URL. In Supabase → **Authentication → Email Templates**, change each link to:
+
+| Template | Link |
+| --- | --- |
+| Confirm signup | `{{ .RedirectTo }}?token_hash={{ .TokenHash }}&type=signup` |
+| Reset password | `{{ .RedirectTo }}?token_hash={{ .TokenHash }}&type=recovery` |
+| Change email address | `{{ .RedirectTo }}?token_hash={{ .TokenHash }}&type=email_change` |
+
+The app opens `/auth/callback`, wipes the address bar, and sends the code to `POST /api/auth/verify`, which sets cookies. Older links (tokens in the `#fragment`) still work: the page hands them straight to the backend and keeps nothing.
+
+**CSRF** — [backend/src/middleware/security.ts](backend/src/middleware/security.ts). Every state-changing request (and exports) must pass three checks: the `Origin`/`Referer` is the app itself or a configured frontend origin; the `X-RandRoute-Client: web` header is present; and `X-CSRF-Token` matches the HttpOnly CSRF cookie (fetched from `GET /api/auth/csrf`, kept in memory only). Plus `SameSite=Strict` cookies.
+
+**Rate limits** (SECURITY.md 15). Each answers 429 with `Retry-After` and writes a safe log line.
+
+| Area | Limit |
+| --- | --- |
+| All API traffic | 120 / minute / IP |
+| Sign-in | 10 / 15 min / IP |
+| Sign-up, password reset, account recovery, resend verification | 5 / 15 min / IP |
+| Email links | 10 / 15 min / IP |
+| Statement uploads | 5 / 15 min / IP; files over 2 MB: 2 / hour / user |
+| AI (coach and budget review) | 5 / day / user and 1 per 10 min after an answer (stored in `ai_requests`, so it holds across servers); 20 / 15 min / IP; 100 / 15 min for the whole service |
+| Saved transaction edits and statement deletes | 20 / hour / user |
+| Budget changes | 10 / hour / user |
+| Account or data deletion | 5 / day / user |
+| Email change | 5 / hour / user |
+| Exports | 10 / hour / user |
+
+The per-IP and per-service counters live in memory, so on Vercel each server instance counts separately. For strict global limits, move them to a shared store (for example Upstash Redis from the Vercel Marketplace). For local demo seeding only, `RATE_LIMITS=off` switches them off (ignored in production).
+
+**AI** — AI also needs setup to be finished and consent to the current policy. Output is treated as untrusted: HTML, links, control characters and markdown are stripped, and every figure is checked against the app's own totals.
+
+**Headers** — API: `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`, HSTS (2 years, preload), `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy: no-referrer`, `Permissions-Policy`, `Cache-Control: no-store`. The frontend gets a strict CSP (self plus Google Fonts) and the same headers from [vercel.json](vercel.json). CORS allows only configured origins, and only the `Content-Type`, `X-RandRoute-Client` and `X-CSRF-Token` headers.
+
+**Logging and monitoring** — every response has an `X-Request-Id`. Security events (`rate_limited`, `origin_blocked`, `csrf_failed`, `login_failed`, `password_check_failed`, `auth_failed`, `ai_limit`, `upload_rejected`) are logged as one JSON line with the request ID, route and a one-way hash of the IP and user ID — never bodies, tokens, emails or financial data. Unexpected errors log only the error name; users see a reference number.
+
+**Dependencies** — `npm run audit` in each app; [.github/dependabot.yml](.github/dependabot.yml) opens weekly update PRs and [.github/workflows/security.yml](.github/workflows/security.yml) runs the audit, typecheck and tests on every push.
+
 ### Incident prevention checklist
 
 - [ ] No secrets in Git.
@@ -1002,7 +1053,7 @@ In development, Vite forwards `/api` requests to the backend, so the frontend ne
 
 ### Sample statements and demo account
 
-`cd backend && npm run demo` (with the backend running) creates or resets **kmanyama009+demo@gmail.com** with six months of synthetic statements and prints a new password.
+`cd backend && npm run demo` (with the backend running locally with `RATE_LIMITS=off`, since it uploads 7 statements) creates or resets **kmanyama009+demo@gmail.com** with six months of synthetic statements and prints a new password.
 
 `cd backend && npm run fixtures` writes synthetic statements (made-up data) in the FNB, Capitec, Absa, Standard Bank, Nedbank and TymeBank column layouts to `backend/fixtures/`. Upload them on the Statements screen to try the full import flow. PDFs are git-ignored.
 

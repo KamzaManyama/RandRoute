@@ -45,13 +45,29 @@ export const COACH_RESPONSE_SCHEMA = {
   required: ["summary", "positives", "concerns", "actions", "motivation"],
 } as const;
 
-const point = z.string().trim().min(3).max(400);
+/**
+ * AI output is untrusted (SECURITY.md 10.6): strip HTML tags, links, control
+ * characters and markdown so only plain sentences reach the screen.
+ */
+export function cleanAiText(text: string): string {
+  return text
+    .replace(/<[^>]*>/g, "") // HTML tags
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1") // markdown links -> their text
+    .replace(/\bhttps?:\/\/\S+/gi, "") // bare URLs
+    .replace(/[\u0000-\u0008\u000B-\u001F\u007F​-‏‪-‮⁦-⁩]/g, "") // control and direction characters
+    .replace(/[*_`#>]+/g, "") // markdown emphasis, code, headings, quotes
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const clean = (min: number, max: number) => z.string().transform(cleanAiText).pipe(z.string().min(min).max(max));
+const point = clean(3, 400);
 const RawCoachSchema = z.object({
-  summary: z.string().trim().min(10).max(1200),
+  summary: clean(10, 1200),
   positives: z.array(point).min(1).max(5),
   concerns: z.array(point).min(1).max(5),
   actions: z.array(point).min(1).max(5),
-  motivation: z.string().trim().min(3).max(300),
+  motivation: clean(3, 300),
 });
 
 export type CoachAnswer = {
@@ -141,7 +157,7 @@ export const BUDGET_REVIEW_SCHEMA = {
   required: ["summary", "suggestions"],
 } as const;
 
-const RawBudgetSchema = z.object({ summary: z.string().trim().min(10).max(1200), suggestions: z.array(point).min(1).max(6) });
+const RawBudgetSchema = z.object({ summary: clean(10, 1200), suggestions: z.array(point).min(1).max(6) });
 
 export type BudgetReview = { summary: string; suggestions: string[] };
 

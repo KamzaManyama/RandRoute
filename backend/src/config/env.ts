@@ -61,10 +61,10 @@ const envSchema = z.object({
   SUPABASE_JWKS_URL: z.url().optional(),
   AUTH_REDIRECT_URL: z.string().optional(),
 
-  // Refresh-token cookie. Defaults: Secure in production; SameSite=Lax (use "none" only
-  // when the frontend and backend are on different sites, which also requires Secure).
+  // Session cookies (all HttpOnly). Secure is always on in production. SameSite is
+  // Strict by default; "lax" is allowed, cross-site ("none") is not (SECURITY.md 5.3).
   COOKIE_SECURE: z.enum(["true", "false"]).optional(),
-  COOKIE_SAMESITE: z.enum(["lax", "strict", "none"]).default("lax"),
+  COOKIE_SAMESITE: z.enum(["lax", "strict"], { error: 'must be "strict" or "lax"' }).default("strict"),
 
   AI_ENABLED: booleanString,
   GEMINI_API_KEY: z.string().optional().transform((value) => (value ? value : undefined)),
@@ -89,7 +89,7 @@ export type AppConfig = {
   };
   cookies: {
     secure: boolean;
-    sameSite: "lax" | "strict" | "none";
+    sameSite: "lax" | "strict";
   };
   ai: {
     enabled: boolean;
@@ -116,8 +116,8 @@ export function loadConfig(rawEnv: NodeJS.ProcessEnv = process.env): AppConfig {
   }
 
   const cookieSecure = e.COOKIE_SECURE ? e.COOKIE_SECURE === "true" : e.NODE_ENV === "production";
-  if (e.COOKIE_SAMESITE === "none" && !cookieSecure) {
-    throw new Error("COOKIE_SAMESITE=none requires COOKIE_SECURE=true.");
+  if (e.NODE_ENV === "production" && !cookieSecure) {
+    throw new Error("COOKIE_SECURE=false isn't allowed in production. Session cookies must be Secure.");
   }
 
   const frontendOrigins = resolveFrontendOrigins(env);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { apiError, fakeBackend, signedInRoutes, signedOutRoutes, testSession } from './test/fakeBackend'
+import { apiError, fakeBackend, signedInRoutes, signedOutRoutes, TEST_CSRF, testSession } from './test/fakeBackend'
 import { renderApp } from './test/renderApp'
 
 describe('signed out', () => {
@@ -15,7 +15,7 @@ describe('signed out', () => {
   it('signs in and lands on Home with the user greeted', async () => {
     const { calls } = fakeBackend({
       ...signedOutRoutes,
-      'POST /api/auth/login': () => ({ session: testSession }),
+      'POST /api/auth/login': () => testSession,
       'GET /api/dashboard/summary': signedInRoutes['GET /api/dashboard/summary']!,
     })
     renderApp('/sign-in')
@@ -27,9 +27,14 @@ describe('signed out', () => {
     const login = calls.find((c) => c.path === '/api/auth/login')!
     expect(login.body).toEqual({ email: 'maredi@example.com', password: 'Passw0rd!' })
     expect(login.headers.get('X-RandRoute-Client')).toBe('web')
-    // Signed-in calls carry the access token
+    // Writes carry the CSRF token; no call ever carries a bearer token (the session is an HttpOnly cookie).
+    expect(login.headers.get('X-CSRF-Token')).toBe(TEST_CSRF)
+    expect(calls.every((c) => !c.headers.has('Authorization'))).toBe(true)
     const dashboard = calls.find((c) => c.path === '/api/dashboard/summary')!
-    expect(dashboard.headers.get('Authorization')).toBe('Bearer test-access-token')
+    expect(dashboard.headers.get('X-CSRF-Token')).toBeNull() // reads don't need it
+    // Nothing about the session is kept in browser storage.
+    expect(window.localStorage.length).toBe(0)
+    expect(window.sessionStorage.length).toBe(0)
   })
 
   it('shows the server message for a wrong password', async () => {
@@ -175,5 +180,33 @@ describe('home', () => {
     renderApp('/')
     expect(await screen.findByRole('link', { name: 'Upload a statement' })).toHaveAttribute('href', '/statements/upload')
     expect(screen.getByText(/not a live bank balance/i)).toBeInTheDocument()
+  })
+})
+
+describe('email links (no tokens kept in the browser)', () => {
+  it('verifies a token_hash link through the backend and wipes it from the address bar', async () => {
+    window.history.replaceState(null, '', '/auth/callback?token_hash=abcdef0123456789&type=signup')
+    const { calls } = fakeBackend({
+      ...signedOutRoutes,
+      'POST /api/auth/verify': () => ({ next: 'signed_in', type: 'signup', ...testSession }),
+      'GET /api/dashboard/summary': signedInRoutes['GET /api/dashboard/summary']!,
+      'GET /api/profile': signedInRoutes['GET /api/profile']!,
+    })
+    renderApp('/auth/callback')
+    expect(await screen.findByText('Your email is verified. Welcome to RandRoute!')).toBeInTheDocument()
+    expect(calls.find((c) => c.path === '/api/auth/verify')!.body).toEqual({ tokenHash: 'abcdef0123456789', type: 'signup' })
+    expect(window.location.search).toBe('')
+  })
+
+  it('sends an older recovery link token to the backend and opens the reset form', async () => {
+    window.history.replaceState(null, '', '/auth/callback#access_token=recovery-token&type=recovery')
+    const { calls } = fakeBackend({
+      ...signedOutRoutes,
+      'POST /api/auth/recovery': () => ({ next: 'reset_password' }),
+    })
+    renderApp('/auth/callback')
+    expect(await screen.findByRole('heading', { name: 'Choose a new password' })).toBeInTheDocument()
+    expect(calls.find((c) => c.path === '/api/auth/recovery')!.body).toEqual({ accessToken: 'recovery-token' })
+    expect(window.location.hash).toBe('')
   })
 })

@@ -24,6 +24,8 @@ export function fakeBackend(routes: Record<string, Handler>) {
     calls.push(req)
 
     const route = compiled.find((r) => r.method === method && r.re.test(url.pathname))
+    // Every app gets a CSRF token unless a test says otherwise.
+    if (!route && method === 'GET' && url.pathname === '/api/auth/csrf') return json({ csrfToken: TEST_CSRF })
     if (!route) return json({ error: { code: 'not_found', message: `No fake for ${method} ${url.pathname}` } }, 404)
     const result = await route.handler(req)
     if (result instanceof Response) return result
@@ -42,10 +44,12 @@ export function apiError(status: number, code: string, message: string, fields?:
   return json({ error: { code, message, ...(fields ? { fields } : {}) } }, status)
 }
 
+export const TEST_CSRF = 'test-csrf-token'
+
+/** What the backend returns on sign-in: no token, ID or email (those stay in HttpOnly cookies). */
 export const testSession = {
-  accessToken: 'test-access-token',
-  expiresAt: Math.floor(Date.now() / 1000) + 3600,
-  user: { id: 'user-1', email: 'maredi@example.com', displayName: 'Maredi Manyama' },
+  signedIn: true as const,
+  user: { displayName: 'Maredi Manyama' },
 }
 
 export const emptyDashboard = {
@@ -83,7 +87,7 @@ export const testProfile = {
 
 /** Routes every signed-in screen needs. */
 export const signedInRoutes: Record<string, Handler> = {
-  'POST /api/auth/refresh': () => ({ session: testSession }),
+  'POST /api/auth/refresh': () => testSession,
   'POST /api/auth/logout': () => null,
   'GET /api/dashboard/summary': () => emptyDashboard,
   'GET /api/health': () => ({ status: 'ok', ai: 'disabled' }),

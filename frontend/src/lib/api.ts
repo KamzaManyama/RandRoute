@@ -23,23 +23,42 @@ export class ApiError extends Error {
 export type RequestOptions = {
   method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
   body?: unknown
-  /** Access token for signed-in requests. */
-  token?: string | null
   signal?: AbortSignal
   /** 'blob' for file downloads (e.g. exports). */
   responseType?: 'json' | 'blob'
+  /** Send the CSRF token on a GET too (exports need it). */
+  csrf?: boolean
 }
 
-export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
+/*
+ * Sessions live in HttpOnly cookies set by the backend: this code never sees
+ * an access or refresh token, and never sends an Authorization header.
+ *
+ * The CSRF token is not a login credential. It proves a request came from
+ * this app (another site can't read it), and is kept in memory only.
+ */
+let csrfToken: string | null = null
+let csrfInFlight: Promise<string> | null = null
+
+function loadCsrf(): Promise<string> {
+  csrfInFlight ??= send<{ csrfToken: string }>('/api/auth/csrf', {})
+    .then((r) => (csrfToken = r.csrfToken))
+    .finally(() => {
+      csrfInFlight = null
+    })
+  return csrfInFlight
+}
+
+async function send<T>(path: string, options: RequestOptions, csrf?: string): Promise<T> {
   const headers: Record<string, string> = {
     Accept: 'application/json',
-    // Required by the backend's auth routes; blocks cross-site form posts.
+    // The backend rejects API calls without it; other sites can't add it.
     'X-RandRoute-Client': 'web',
   }
   const isForm = typeof FormData !== 'undefined' && options.body instanceof FormData
   // FormData sets its own multipart Content-Type (with boundary).
   if (options.body !== undefined && !isForm) headers['Content-Type'] = 'application/json'
-  if (options.token) headers.Authorization = `Bearer ${options.token}`
+  if (csrf) headers['X-CSRF-Token'] = csrf
 
   let response: Response
   try {
@@ -48,7 +67,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
       headers,
       body: options.body === undefined ? undefined : isForm ? (options.body as FormData) : JSON.stringify(options.body),
       signal: options.signal,
-      credentials: 'include', // sends the httpOnly refresh cookie to /api/auth
+      credentials: 'include', // sends the HttpOnly session cookies
     })
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error
@@ -72,18 +91,34 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   return data as T
 }
 
+export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const needsCsrf = (options.method ?? 'GET') !== 'GET' || options.csrf === true
+  if (!needsCsrf) return send<T>(path, options)
+  try {
+    return await send<T>(path, options, csrfToken ?? (await loadCsrf()))
+  } catch (error) {
+    // The CSRF token changes after sign-out; fetch the new one and try once more.
+    if (!(error instanceof ApiError) || error.code !== 'csrf_invalid') throw error
+    csrfToken = null
+    return send<T>(path, options, await loadCsrf())
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Typed endpoints
 // ---------------------------------------------------------------------------
 export type HealthResponse = { status: 'ok'; ai: 'enabled' | 'disabled' }
 
-export type SessionUser = { id: string; email: string | null; displayName: string | null }
-export type Session = { accessToken: string; expiresAt: number; user: SessionUser }
+/** All an auth response carries: no token, user ID or email. */
+export type SessionUser = { displayName: string | null }
+export type Session = { signedIn: true; user: SessionUser }
 export type Profile = SessionUser & { currency: string; setupCompleted: boolean }
+export type EmailLinkType = 'signup' | 'email' | 'recovery' | 'email_change' | 'invite' | 'magiclink'
+export type VerifyResult = { next: 'reset_password' } | ({ next: 'signed_in'; type: EmailLinkType } & Session)
 
 export type RegisterResult =
   | { status: 'verification_required'; message: string }
-  | { status: 'signed_in'; session: Session }
+  | ({ status: 'signed_in' } & Session)
 
 export type DashboardSummary = {
   month: string
@@ -137,22 +172,27 @@ export const api = {
   auth: {
     register: (body: { email: string; password: string; displayName?: string; acceptedPolicies: true }) =>
       apiRequest<RegisterResult>('/api/auth/register', { method: 'POST', body }),
-    login: (body: { email: string; password: string }) =>
-      apiRequest<{ session: Session }>('/api/auth/login', { method: 'POST', body }),
-    refresh: () => apiRequest<{ session: Session }>('/api/auth/refresh', { method: 'POST' }),
+    login: (body: { email: string; password: string }) => apiRequest<Session>('/api/auth/login', { method: 'POST', body }),
+    refresh: () => apiRequest<Session>('/api/auth/refresh', { method: 'POST' }),
+    /** Email link with a one-time token_hash (no session token in the URL). */
+    verify: (tokenHash: string, type: EmailLinkType) =>
+      apiRequest<VerifyResult>('/api/auth/verify', { method: 'POST', body: { tokenHash, type } }),
+    /** Older email links: hand the token straight to the backend, which sets cookies. */
     sessionFromLink: (refreshToken: string) =>
-      apiRequest<{ session: Session }>('/api/auth/session', { method: 'POST', body: { refreshToken } }),
-    logout: (token: string | null) => apiRequest<null>('/api/auth/logout', { method: 'POST', token }),
+      apiRequest<Session>('/api/auth/session', { method: 'POST', body: { refreshToken } }),
+    recoveryFromLink: (accessToken: string) =>
+      apiRequest<{ next: 'reset_password' }>('/api/auth/recovery', { method: 'POST', body: { accessToken } }),
+    recoveryStatus: () => apiRequest<{ ready: boolean }>('/api/auth/recovery'),
+    logout: () => apiRequest<null>('/api/auth/logout', { method: 'POST' }),
     forgotPassword: (email: string) =>
       apiRequest<{ message: string }>('/api/auth/forgot-password', { method: 'POST', body: { email } }),
     resendVerification: (email: string) =>
       apiRequest<{ message: string }>('/api/auth/resend-verification', { method: 'POST', body: { email } }),
-    resetPassword: (recoveryToken: string, password: string) =>
-      apiRequest<{ status: 'password_updated'; session?: Session }>('/api/auth/reset-password', {
+    resetPassword: (password: string) =>
+      apiRequest<{ status: 'password_updated'; signedIn?: true; user?: SessionUser }>('/api/auth/reset-password', {
         method: 'POST',
         body: { password },
-        token: recoveryToken,
       }),
-    me: (token: string) => apiRequest<{ user: Profile }>('/api/auth/me', { token }),
+    me: () => apiRequest<{ user: Profile }>('/api/auth/me'),
   },
 }

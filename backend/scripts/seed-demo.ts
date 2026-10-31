@@ -41,27 +41,43 @@ await admin
   .update({ display_name: profile.display_name, monthly_budget_target_minor: 2_200_000 })
   .eq("user_id", userId);
 
-// 2. Sign in through the API, like the app does
-const headers = { "X-RandRoute-Client": "web" };
-const login = await fetch(`${API}/auth/login`, {
-  method: "POST",
-  headers: { ...headers, "Content-Type": "application/json" },
-  body: JSON.stringify({ email: EMAIL, password }),
-}).then((r) => r.json());
-if (!login.session) throw new Error(`Login failed — is the backend running at ${API}? ${JSON.stringify(login)}`);
-const auth = { ...headers, Authorization: `Bearer ${login.session.accessToken}` };
+// 2. Sign in through the API, like the app does: HttpOnly session cookies plus a CSRF token.
+//    Uploading 7 statements needs the backend started with RATE_LIMITS=off (development only).
+const jar = new Map<string, string>();
+const keep = (res: Response) => {
+  for (const line of res.headers.getSetCookie()) {
+    const [pair] = line.split(";");
+    const [name, ...rest] = pair!.split("=");
+    jar.set(name!.trim(), rest.join("="));
+  }
+  return res;
+};
+const cookieHeader = () => [...jar].map(([k, v]) => `${k}=${v}`).join("; ");
+const csrf = (await keep(await fetch(`${API}/auth/csrf`, { headers: { "X-RandRoute-Client": "web" } })).json()).csrfToken as string;
+const base = () => ({ "X-RandRoute-Client": "web", "X-CSRF-Token": csrf, Cookie: cookieHeader() });
+
+const loginRes = keep(
+  await fetch(`${API}/auth/login`, {
+    method: "POST",
+    headers: { ...base(), "Content-Type": "application/json" },
+    body: JSON.stringify({ email: EMAIL, password }),
+  }),
+);
+const login = await loginRes.json();
+if (!login.signedIn) throw new Error(`Login failed — is the backend running at ${API}? ${JSON.stringify(login)}`);
+const auth = () => base();
 
 async function importPdf(name: string, bytes: Uint8Array, nickname?: string) {
   const form = new FormData();
   form.append("file", new Blob([bytes as BlobPart], { type: "application/pdf" }), name);
   if (nickname) form.append("nickname", nickname);
-  const up = await fetch(`${API}/statements/upload`, { method: "POST", headers: auth, body: form }).then((r) => r.json());
+  const up = await fetch(`${API}/statements/upload`, { method: "POST", headers: auth(), body: form }).then((r) => r.json());
   if (!up.importId) throw new Error(`Upload failed for ${name}: ${JSON.stringify(up)}`);
-  await fetch(`${API}/statements/${up.importId}/accept-all`, { method: "POST", headers: auth });
+  await fetch(`${API}/statements/${up.importId}/accept-all`, { method: "POST", headers: auth() });
   // Demo data only: synthetic statements, so warnings are acknowledged automatically.
   const done = await fetch(`${API}/statements/${up.importId}/confirm`, {
     method: "POST",
-    headers: { ...auth, "Content-Type": "application/json" },
+    headers: { ...auth(), "Content-Type": "application/json" },
     body: JSON.stringify({ acknowledgeWarnings: true }),
   }).then((r) => r.json());
   console.log(`  ${name}: ${done.saved ?? JSON.stringify(done)} transactions imported`);

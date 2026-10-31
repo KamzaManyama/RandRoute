@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { SupabaseClients } from "../lib/supabase.js";
 import { HttpError } from "../middleware/errors.js";
 import { requireAuth } from "../middleware/requireAuth.js";
+import { limiter, WINDOWS } from "../middleware/security.js";
 import { fetchImports, fetchTransactions } from "../finance/queries.js";
 import {
   categoryNameOf,
@@ -104,6 +105,8 @@ function toTransaction(row: ListRow) {
 }
 
 export function spendingRouter(supabase: SupabaseClients): Router {
+  // SECURITY.md 15.1 — at most 20 saved-transaction changes per hour per user.
+  const txWriteLimit = limiter({ name: "transaction_writes", windowMs: WINDOWS.HOUR, limit: 20, by: "user", message: "You've made a lot of changes in a short time. Please wait a while and try again." });
   const router = Router();
   const auth = requireAuth(supabase);
 
@@ -259,7 +262,7 @@ export function spendingRouter(supabase: SupabaseClients): Router {
   });
 
   /** Edit a saved transaction. Totals and budgets recalculate from the saved rows. */
-  router.patch("/transactions/:id", auth, async (req, res) => {
+  router.patch("/transactions/:id", auth, txWriteLimit, async (req, res) => {
     const body = parse(patchBody, req.body);
     const update: Record<string, unknown> = { review_status: "user_edited" };
     if (body.categoryId !== undefined) {
@@ -284,7 +287,7 @@ export function spendingRouter(supabase: SupabaseClients): Router {
   });
 
   /** Delete one saved transaction (the import's count updates automatically). */
-  router.delete("/transactions/:id", auth, async (req, res) => {
+  router.delete("/transactions/:id", auth, txWriteLimit, async (req, res) => {
     const { data, error } = await req.auth!.db.from("transactions").delete().eq("id", req.params.id).select("id");
     if (error) throw dbError("delete this transaction");
     if (!data?.length) throw new HttpError(404, "not_found", "Transaction not found.");

@@ -2,253 +2,622 @@
 
 ## 1. Purpose
 
-RandRoute is a personal finance platform designed to help users understand their spending, organise financial transactions, manage budgets, and plan ahead.
+RandRoute is a personal finance application designed to help users understand their income, expenses, budgeting, transaction history, spending trends, and financial health. The app processes sensitive personal financial information, including bank statements, transaction data, income details, budget targets, and financial goals.
 
-Because the application processes financial information, security and privacy must be considered throughout development, testing, deployment, and maintenance.
+Because this data is highly sensitive, security is a release requirement and not a future enhancement. Every feature that handles user financial data must be implemented with privacy, access control, validation, and secure system design in mind.
 
-This document defines the minimum security requirements for the project.
+This policy defines the minimum security requirements for development, testing, deployment, and production use of RandRoute.
 
-## 2. Supported Versions
+---
 
-Security fixes should be prioritised for the latest actively maintained version of RandRoute.
+## 2. Security Principles
 
-| Version | Security support |
-|---|---|
-| Latest production release | Supported |
-| Development branch | Fixes addressed before release where practical |
-| Older releases | Not guaranteed |
+RandRoute must follow these principles at all times:
 
-## 3. Security Principles
+- Privacy by design
+- Least privilege
+- Secure defaults
+- Server-side enforcement
+- Data minimisation
+- Defense in depth
+- Fail safely
+- Explicit user consent for AI and financial automation
+- No hidden trust in the browser
+- No sensitive data in logs, analytics, or telemetry
 
-RandRoute must follow these principles:
+---
 
-- **Privacy by design:** Collect and retain only the information required for the application's functionality.
-- **Least privilege:** Users and services receive only the permissions they need.
-- **Secure defaults:** New features must not weaken existing protections.
-- **Server-side enforcement:** Authentication, authorisation, financial data access, and AI-provider calls must be enforced by trusted server-side components or database policies.
-- **Data minimisation:** Sensitive information must not be exposed unnecessarily to third-party services, logs, analytics, or error reports.
-- **Defence in depth:** Authentication, database access policies, validation, encryption, monitoring, and testing must work together.
-- **Fail safely:** When a security check fails, protected data and operations must remain inaccessible.
+## 3. Data Classification
 
-## 4. Information Classification
-
-### Sensitive information
+### 3.1 Sensitive information
 
 Treat the following as confidential:
 
-- Imported bank statements and extracted statement contents.
-- Transaction descriptions, amounts, dates, and merchant information.
-- Account identifiers, account-holder names, and banking references.
-- Income, expenses, debts, budgets, and financial goals.
-- AI prompts and responses that contain financial information.
-- Authentication credentials, access tokens, session identifiers, and recovery tokens.
+- Uploaded bank statements
+- Extracted statement contents and transaction text
+- Amounts, dates, merchant names, categories, and transaction descriptions
+- User profile information, emails, phone numbers, and account preferences
+- Financial goals, income, debt, budgets, and savings targets
+- AI prompts and responses containing financial data
+- Authentication credentials, access tokens, session tokens, recovery codes, and refresh tokens
+- Any data that could identify a user’s financial behavior
 
-### Data retention
+### 3.2 Data retention rules
 
-- Do not persist uploaded bank statement PDFs as permanent application records.
-- Do not retain raw extracted statement text unless a documented, reviewed requirement explicitly justifies it.
-- Store only the transaction fields and financial summaries required for the product.
-- Avoid collecting identity numbers, full account numbers, addresses, or other unnecessary identifiers.
-- Temporary files and processing artefacts must be deleted when processing is complete or abandoned, subject to documented operational requirements.
-- Define and enforce retention and deletion rules for imported transactions, user accounts, backups, and derived financial data.
+- Do not permanently store uploaded bank statement PDFs unless there is a justified business requirement and an explicit approved retention policy.
+- Do not retain raw extracted statement text unless specifically required for debugging, review, or legal retention reasons.
+- Store only the cleaned transaction fields and derived summaries required for the app to function.
+- Do not store unnecessary personal identifiers, full account numbers, identity numbers, addresses, or sensitive banking references.
+- Temporary files created during statement parsing must be deleted after processing completes or fails.
+- User deletion and account deletion must remove related records according to a documented retention policy.
+- Backup retention must be disclosed and reviewed.
 
-## 5. Authentication and Authorisation
+---
 
-- Use a maintained authentication provider rather than implementing password handling from scratch.
-- Require authentication before accessing private financial data.
-- Enforce authorisation on the server and at the database level.
-- Ensure each user can access only their own transactions, statements metadata, budgets, insights, and profile information.
-- Never rely on frontend route guards or hidden UI elements as the only access control.
-- Use secure session handling, token expiry, and appropriate session invalidation.
-- Provide secure account recovery and logout behaviour.
-- Apply rate limits to authentication, recovery, and other sensitive endpoints.
-- Never log passwords, authentication tokens, session cookies, or recovery secrets.
+## 4. Security by Design
 
-## 6. Supabase and Database Security
+RandRoute must be built under the assumption that the browser is not a trusted security boundary.
 
-If Supabase is used, the following requirements apply:
+The browser may be used to render content and collect user input, but it must not be trusted with:
+- authentication secrets
+- session secrets
+- privileged database access
+- AI provider credentials
+- financial record ownership checks
+- anything that can grant access to another user's data
 
-- Enable Row Level Security (RLS) on every table containing private user data.
-- Create explicit policies for `SELECT`, `INSERT`, `UPDATE`, and `DELETE` operations as applicable.
-- Validate ownership on inserts and updates; do not trust a user ID supplied by the client.
-- Ensure related records cannot be accessed by manipulating record IDs.
-- Keep Supabase service-role keys and other privileged credentials exclusively in trusted server-side environments.
-- Never expose privileged keys through Vite variables prefixed with `VITE_`, frontend bundles, public repositories, or browser requests.
-- Apply least-privilege permissions to database roles and backend services.
-- Test database policies with multiple test users, including attempts to access each other's records.
-- Protect migrations, database backups, and administrative access.
+All sensitive operations must be enforced on the server.
 
-**Release requirement:** No production deployment may rely solely on frontend filtering to isolate one user's financial data from another user's data.
+---
 
-## 7. Bank Statement Upload and Processing
+## 5. Authentication and Session Security
 
-Statement processing must be treated as a sensitive operation.
+### 5.1 Mandatory auth model
 
-- Accept only documented, supported file types and enforce reasonable file-size limits.
-- Validate file signatures and content rather than trusting filenames or MIME types alone.
-- Generate safe internal filenames; never use user-supplied paths as filesystem paths.
-- Protect against malicious or malformed PDFs, parser failures, oversized documents, and resource-exhaustion attacks.
-- Process uploaded files in a controlled environment with restricted permissions.
-- Avoid storing uploads in publicly accessible locations.
-- Do not expose uploaded statements through predictable URLs.
-- Do not render extracted content as trusted HTML.
-- Validate extracted transaction fields and handle incomplete or malformed statements safely.
-- Delete temporary uploads and intermediate extraction data after processing.
-- Do not silently discard suspected duplicate transactions or uncertain categories; preserve user review and confirmation workflows.
+RandRoute must use a secure, server-managed authentication model.
 
-Uploaded documents must never be treated as trusted instructions or executable content.
+Recommended approach:
+- Use a maintained authentication provider such as Supabase Auth or equivalent secure auth service.
+- Use HttpOnly, Secure, SameSite cookies for sessions.
+- Use short-lived access tokens and refresh tokens.
+- Keep refresh tokens server-side and rotate them securely.
+- Reject expired, invalid, or revoked sessions.
+- Enforce session expiry and logout cleanup.
 
-## 8. Financial Data Integrity
+### 5.2 Forbidden patterns
 
-RandRoute must preserve the accuracy and traceability of financial records.
+The following are prohibited:
 
-- Calculate monetary values in application code using integer cents or an appropriate exact-decimal representation.
-- Do not rely on an AI model to calculate authoritative financial totals.
-- Validate amounts, dates, currencies, transaction types, and category values.
-- Use database transactions where necessary to prevent partial or inconsistent imports.
-- Keep imported records distinguishable from user-edited records.
-- Flag potential duplicates for review rather than silently deleting transactions.
-- Clearly identify incomplete statement coverage and partial financial totals.
-- Require user confirmation before consequential import, deletion, or bulk-edit operations.
-- Never let AI-generated suggestions silently overwrite confirmed financial records or budgets.
+- Storing authentication tokens in localStorage
+- Storing authentication tokens in sessionStorage
+- Storing session tokens in URL query strings
+- Storing access tokens in cookies without HttpOnly
+- Exposing auth tokens in frontend JavaScript variables if they can be read by injected scripts
+- Using bearer tokens in client-visible state for a production finance application
 
-## 9. AI and Third-Party Services
+### 5.3 Cookie configuration
 
-If Gemini or another AI provider is integrated:
+Session cookies must be configured with:
 
-- Invoke AI services only through a trusted backend.
-- Keep provider API keys out of the frontend and source control.
-- Send only the minimum de-identified financial summaries needed to fulfil the user's explicit request.
-- Do not send original bank statement PDFs, raw extracted statement text, full account numbers, or unnecessary personal identifiers to an AI provider.
-- Do not invoke AI automatically merely because the user opens the Insights screen.
-- Treat AI output as untrusted input. Validate structured responses before displaying or saving them.
-- Do not allow AI responses to execute database operations, alter permissions, or perform privileged actions directly.
-- Review the provider's retention, training, processing-location, and privacy terms before sending real financial data.
-- Provide a way for core budgeting and transaction features to continue when AI is unavailable.
-- Never represent AI-generated explanations as verified financial advice.
+- HttpOnly: true
+- Secure: true in production
+- SameSite: Lax or Strict
+- Path: /
+- MaxAge or expiry policy appropriate to the session lifecycle
+- Clear session cookie on logout
 
-## 10. Secrets and Environment Variables
+Do not rely on frontend-only route guards as the only protection.
 
-- Store local development secrets in an ignored environment file such as `.env.local`.
-- Commit an `.env.example` containing placeholder values only.
-- Add environment files, private keys, certificates, tokens, and credential exports to `.gitignore` where appropriate.
-- Configure production secrets through the hosting platform's secret-management facilities.
-- Use separate credentials for development, testing, and production.
-- Rotate exposed or suspected-compromised credentials immediately.
-- If a secret is committed, revoke or rotate it; removing it from the latest commit alone is insufficient.
+### 5.4 Bearer tokens
 
-Never commit real credentials to GitHub, including in branches, logs, test fixtures, screenshots, or documentation.
+If bearer tokens are used, they must:
+- be short-lived
+- be issued only by the backend
+- not be stored in browser localStorage
+- not be sent through URLs or logs
+- be rotated properly
+- be validated on every protected request
+
+Prefer cookie-based sessions for finance workloads.
+
+### 5.5 Session binding and scoping
+
+Each session must be scoped to:
+- the authenticated user
+- the relevant app instance
+- the expected device/browser context where appropriate
+- the intended session lifetime
+
+Sessions must not be transferable across users or accounts.
+
+### 5.6 Logout and invalidation
+
+- On logout, destroy the current session token or refresh token
+- Clear all authentication cookies
+- Invalidate the user session server-side
+- Reject tokens after logout
+- Revoke refresh tokens when session rotation is detected
+
+---
+
+## 6. Access Control and Authorisation
+
+### 6.1 Required access controls
+
+Every private endpoint must enforce server-side authorization.
+
+- A user must not access another user’s data
+- A user must not modify another user’s budgets
+- A user must not view another user’s transactions
+- A user must not access another user’s settings, statement metadata, AI history, or profile information
+- A user must not perform administrative actions without appropriate roles
+
+### 6.2 Ownership checks
+
+The server must verify:
+- user identity from a trusted auth context
+- ownership of every relevant resource
+- tenant or account scoped access where applicable
+- permission levels before allowing mutations
+
+Under no circumstances may the frontend decide which records belong to a user.
+
+### 6.3 Preventing IDOR
+
+The app must protect against insecure direct object reference attacks:
+
+- Avoid trusting user IDs from the client
+- Verify ownership before reading or updating records
+- Validate object IDs before DB access
+- Use server-side queries scoped to the authenticated user
+- Reject resource access when the user ID does not match the authenticated account
+
+### 6.4 Role-based access
+
+If roles are introduced later, they must be enforced with explicit backend checks:
+- admin
+- user
+- support
+- system
+
+Frontend route guards are not sufficient.
+
+---
+
+## 7. Cross-Site Request Forgery (CSRF) Protection
+
+If the app uses cookies for authentication, CSRF protection is required.
+
+### 7.1 Minimum requirements
+
+- Use same-site cookies
+- Validate Origin or Referer on sensitive state-changing requests
+- Use anti-CSRF tokens for forms and API requests where appropriate
+- Require CSRF checks for all non-GET state-changing actions
+
+### 7.2 Cookie policy
+
+- HttpOnly
+- Secure
+- SameSite=Lax or Strict
+- Cookies should not be accepted cross-site unless explicitly required
+
+### 7.3 Protected actions
+
+CSRF protection must be implemented for:
+- login
+- logout
+- signup
+- password reset
+- profile updates
+- transaction creation/deletion
+- budget modifications
+- AI-triggering actions
+- export requests
+- delete account actions
+
+---
+
+## 8. Database Security
+
+### 8.1 Server-side enforcement
+
+If Supabase or another database is used, all user data must be protected by row-level security and/or trusted server-side validation.
+
+### 8.2 Required rules
+
+- Enable Row Level Security (RLS) on all tables with private user data
+- Create explicit policies for SELECT, INSERT, UPDATE, and DELETE
+- Validate ownership on every insert/update/delete
+- Never trust a client-provided user_id
+- Enforce foreign-key integrity
+- Prevent mass data enumeration
+- Reject unauthorised queries before data is returned
+- Ensure support and admin actions are restricted
+
+### 8.3 Secret management
+
+- Store DB secrets only in server-side environment variables
+- Never expose database credentials in frontend code, browser bundles, or Vite variables
+- Keep service-role keys and privileged admin keys on the backend only
+- Separate dev, staging, and production credentials
+
+### 8.4 SQL injection prevention
+
+- Use parameterized queries
+- Avoid raw SQL concatenation from user input
+- Validate input types and constraints
+- Treat all client inputs as hostile
+
+---
+
+## 9. File Upload Security
+
+Bank statement processing involves sensitive uploads and should be treated as a high-risk area.
+
+### 9.1 Upload safeguards
+
+- Accept only known supported file types
+- Enforce a maximum file size limit
+- Validate MIME type and file signature
+- Reject malformed, oversized, or corrupted PDFs
+- Reject encrypted or password-protected unsupported documents
+- Reject suspicious or malicious uploads
+- Store uploads in an isolated, restricted temp area
+- Add upload rate limits and abuse prevention
+
+### 9.2 Temporary file management
+
+- Process files in a secure temp directory with restricted permissions
+- Delete files after processing is complete
+- Delete files after a failed processing attempt
+- Delete files after cancellation or timeout
+- Do not store raw PDFs as user records unless explicitly approved
+
+### 9.3 PDF processing security
+
+- Do not trust filename extensions or MIME types alone
+- Do not treat uploaded PDFs as trusted instructions or executable content
+- Do not render uploaded PDFs as HTML or script content
+- Validate extracted transaction fields before saving
+- Never log raw PDF content or raw extracted statement text
+- Strip or sanitize any extracted values before use in downstream systems
+
+---
+
+## 10. AI Security Requirements
+
+AI calls are high risk because they can expose financial and personal data.
+
+### 10.1 AI access model
+
+- AI must only run from a trusted backend service
+- Frontend must never call the AI provider directly
+- Frontend must never include AI provider keys
+- Frontend must never call the database or financial logic service directly
+- AI provider keys must remain server-side only
+
+### 10.2 Mandatory consent
+
+AI access must require explicit user consent.
+
+- The user must take a deliberate action such as “Explain my spending”
+- AI must not run automatically while the user is just viewing Insights
+- AI must not run on page load
+- AI must not run on timer or background refresh
+- AI must not run when the user has not consented
+
+### 10.3 Minimum data to send
+
+The AI request must contain only the minimum safe summary required for the user request.
+
+Examples of allowed fields:
+- month
+- income
+- spending totals
+- category totals
+- budget status
+- savings rate
+- risk level
+- top concerns
+- user goals
+- trend summary
+
+Examples of forbidden fields:
+- raw bank statements
+- bank account numbers
+- raw transaction text
+- transaction descriptions that reveal sensitive merchant or personal data
+- user email address
+- full name
+- phone number
+- identity numbers
+- full account details
+- raw statements or PDFs
+- free-form personal financial details not needed for the request
+
+### 10.4 AI rate limiting
+
+AI usage must be rate limited to protect cost and abuse.
+
+Default policy:
+- Maximum 5 AI requests per user per 24-hour period
+- Maximum 1 AI request per user per rolling 10-minute window
+- Maximum 20 AI requests per IP address per 15-minute window
+- Maximum 100 AI requests total per service per 15-minute window
+
+These limits may be tuned by environment, but the system must enforce a baseline.
+
+### 10.5 AI request validation
+
+- Validate the AI request before sending
+- Reject empty or malformed payloads
+- Reject requests without authentication
+- Reject requests without user consent
+- Reject requests when daily quota is reached
+- Reject requests when the user has not completed required profile or setup data
+- Validate AI response structure before displaying it
+
+### 10.6 AI response handling
+
+- Treat AI output as untrusted input
+- Validate structured fields before rendering
+- Sanitize text before display
+- Do not allow AI output to execute commands or change system state directly
+- Never allow AI to overwrite financial totals or budgets without explicit human approval
+- Never present AI output as guaranteed financial advice
+- Clearly label AI outputs as AI-generated
+
+### 10.7 AI fallback behavior
+
+If AI is unavailable or quota is exhausted:
+- the app must continue to function
+- core budgeting and transaction features must still work
+- the user should receive an informative fallback message
+- no financial totals must disappear due to AI failure
+
+---
 
 ## 11. Web Application Security
 
-Implement and test the following controls where applicable:
+The following web controls are mandatory where applicable:
 
-- HTTPS for all production traffic.
-- Appropriate Content Security Policy (CSP) and other security response headers.
-- Input validation on both client and server.
-- Context-appropriate output encoding to mitigate cross-site scripting (XSS).
-- Parameterised database queries to prevent SQL injection.
-- CSRF protection where cookie-based authentication and request patterns require it.
-- Secure cookie attributes, including `Secure`, `HttpOnly`, and an appropriate `SameSite` policy, where cookies are used.
-- Restrictive CORS configuration.
-- Rate limiting and abuse protection on sensitive endpoints.
-- Safe error responses that do not expose stack traces, SQL queries, secrets, or private financial data.
-- Dependency and build-tool updates with security implications reviewed.
-- Protection against insecure direct object references and broken access control.
+- HTTPS only in production
+- HSTS headers
+- Content Security Policy (CSP)
+- X-Frame-Options
+- X-Content-Type-Options
+- Referrer-Policy
+- Permissions-Policy
+- CORS configured for trusted origins only
+- Strict input validation on both frontend and backend
+- Output encoding to reduce XSS
+- Parameterized database queries
+- Rate limiting on sensitive routes
+- Safe error handling
+- No stack traces or internal implementation details in user-facing errors
 
-Security controls must be implemented in the layer that can reliably enforce them; frontend-only protections are insufficient.
+### 11.1 CORS
 
-## 12. Logging and Monitoring
+- Do not allow arbitrary wildcard origins
+- Allow only known app origins
+- If using cookies, CORS must support credentials and trusted origins only
 
-- Never log passwords, tokens, full bank statements, raw extracted statement text, or unnecessary financial identifiers.
-- Avoid logging transaction descriptions and amounts unless a documented operational need justifies it.
-- Use non-sensitive correlation identifiers for troubleshooting where possible.
-- Record security-relevant events, such as repeated failed logins, access-control failures, suspicious upload activity, and administrative changes.
-- Restrict access to logs and define retention periods.
-- Ensure error-monitoring and analytics services do not automatically capture sensitive financial data.
-- Investigate unexpected access patterns and suspected account compromise.
+### 11.2 Headers
 
-## 13. South African Privacy Requirements
+The application must set relevant security headers on responses, including but not limited to:
+- Content-Security-Policy
+- Strict-Transport-Security
+- X-Frame-Options
+- X-Content-Type-Options
+- Referrer-Policy
+- Permissions-Policy
 
-RandRoute must be developed with the Protection of Personal Information Act (POPIA) in mind.
+### 11.3 Input validation
 
-Before production launch:
+Every input must be validated on the backend before use.
 
-- Identify the personal information processed and document the purpose for each category.
-- Establish an appropriate lawful basis for processing and provide clear privacy notices.
-- Implement reasonable technical and organisational safeguards.
-- Define procedures for data access, correction, deletion, retention, and security incidents.
-- Review third-party operators and cross-border processing arrangements where applicable.
-- Determine applicable information-officer, breach-notification, and other legal obligations with qualified guidance where needed.
+This includes:
+- login and signup payloads
+- budget values
+- transaction data
+- file metadata
+- URLs
+- AI request data
+- query parameters
+- account deletion requests
 
-This section is an engineering baseline, not a statement that the application is legally compliant. Compliance must be assessed against the actual implementation and applicable law.
+Do not accept unsigned or untrusted input as valid.
 
-## 14. Vulnerability Reporting
+---
 
-Please do not publish exploitable vulnerabilities or sensitive user data in public issues.
+## 12. Data Minimisation and Privacy
 
-Report suspected security vulnerabilities privately to the project maintainer through an established private communication channel. A dedicated security contact should be published before production launch.
+### 12.1 Public disclosure
 
-Include, where safe:
+- Do not expose user financial details in public docs, demos, or screenshots
+- Do not include real transactions in public repositories
+- Never commit real bank statements, personal financial data, or credentials to Git
 
-- A concise description of the vulnerability.
-- The affected component or endpoint.
-- Steps to reproduce the issue.
-- Potential impact and any practical mitigation.
-- Relevant logs or screenshots with credentials and personal information removed.
+### 12.2 User privacy
 
-Do not access, download, modify, or disclose another person's financial data to prove a vulnerability.
+- Do not request unnecessary personal data
+- Do not collect information not needed for the app
+- Do not expose financial details to third-party services unless explicitly required and approved
+- Do not display sensitive data in URLs, logs, or browser analytics
+- Do not allow third-party vendors to process data without review
 
-The project maintainer should acknowledge reports, assess severity, prioritise remediation, and coordinate disclosure after an appropriate fix is available.
+### 12.3 Retention
 
-## 15. Incident Response
+- Define and enforce data retention windows
+- Delete expired data safely
+- Provide deletion and export controls for users
+- Describe retention periods in the privacy policy
 
-For a suspected security incident:
+---
 
-1. **Contain:** Disable affected functionality, revoke compromised credentials, or restrict access where necessary.
-2. **Assess:** Identify affected systems, users, data categories, and the likely scope of exposure.
-3. **Preserve evidence:** Secure relevant logs and incident records without unnecessarily copying sensitive financial data.
-4. **Remediate:** Patch the vulnerability, rotate secrets, correct permissions, and address the root cause.
-5. **Recover:** Restore service safely and verify that the vulnerability is no longer exploitable.
-6. **Notify:** Follow applicable legal and contractual notification requirements, including any POPIA obligations.
-7. **Review:** Document the incident, its impact, and measures to prevent recurrence.
+## 13. Logging and Monitoring
 
-Do not conceal a confirmed incident or claim that user data was unaffected without evidence.
+### 13.1 Logging rules
 
-## 16. Security Testing Before Production
+- Never log passwords
+- Never log session tokens or refresh tokens
+- Never log raw bank statements
+- Never log raw extracted statement text
+- Never log full user financial data
+- Never log AI prompts or responses with sensitive data
+- Never log security-sensitive request payloads unless explicitly required for debugging and appropriately redacted
 
-The release process must include, at minimum:
+### 13.2 Log safety
 
-- [ ] Verify authentication and account-recovery flows.
-- [ ] Test cross-user data isolation using separate test accounts.
-- [ ] Test RLS policies and direct database/API access.
-- [ ] Verify that privileged credentials never appear in frontend assets.
-- [ ] Test malicious, malformed, oversized, and unsupported uploads.
-- [ ] Verify temporary-file cleanup and error handling.
-- [ ] Test validation of imported transactions and financial totals.
-- [ ] Review AI requests for unnecessary personal or financial information.
-- [ ] Check access controls on all sensitive endpoints.
-- [ ] Review dependencies for known vulnerabilities.
-- [ ] Verify production HTTPS, security headers, CORS, and rate limits.
-- [ ] Confirm that logs and error reports do not leak sensitive data.
-- [ ] Test account deletion and documented data-retention behaviour.
-- [ ] Review production environment variables and deployment permissions.
+Use safe logging patterns:
+- request ID
+- timestamp
+- route
+- status code
+- minimal metadata
+- redacted identifiers
 
-High-impact security findings must be resolved before release.
+### 13.3 Monitoring
+
+The app must monitor:
+- repeated failed login attempts
+- suspicious API access
+- failed access-control checks
+- suspicious upload patterns
+- rate-limit violations
+- repeated AI usage attempts
+- large numbers of failed requests from a single user/IP
+
+---
+
+## 14. Security Testing
+
+Before production release, the app must pass at least the following checks:
+
+- [ ] Authentication works correctly and cannot be bypassed
+- [ ] Sessions are scoped correctly to the authenticated user
+- [ ] No access to another user’s data is possible
+- [ ] No tokens are stored in localStorage or sessionStorage
+- [ ] Cookies are HttpOnly, Secure, and SameSite configured correctly
+- [ ] Request validation and DTO checks are enforced on the backend
+- [ ] CSRF protection is active for cookie-based auth
+- [ ] Uploads are validated and cleaned up correctly
+- [ ] Rate limiting is active on authentication and AI endpoints
+- [ ] AI calls require explicit consent
+- [ ] AI requests include only safe summary data
+- [ ] Error responses do not leak secrets or internal data
+- [ ] Logs are safe and do not expose sensitive financial information
+- [ ] User deletion/removal works correctly
+- [ ] API endpoints enforce authorisation and ownership checks
+- [ ] Database policies reject cross-user access attempts
+- [ ] Large or malicious uploads are rejected
+- [ ] Dependency scanning is performed
+- [ ] Security headers are present in production
+
+---
+
+## 15. Rate Limiting Policy
+
+Rate limiting is mandatory to protect the app from abuse and excessive cost.
+
+### 15.1 Default endpoint limits
+
+- Authentication endpoints:
+  - login: max 10 attempts per 15 minutes per IP
+  - signup: max 5 per 15 minutes per IP
+  - password reset: max 5 per 15 minutes per IP
+  - account recovery: max 5 per 15 minutes per IP
+
+- Public and general endpoints:
+  - max 120 requests per minute per IP for public API traffic
+  - max 300 requests per minute per IP for internal trusted traffic
+
+- File upload endpoints:
+  - max 5 uploads per 15 minutes per IP
+  - max 2 heavy uploads per hour per user
+
+- AI endpoints:
+  - max 5 AI requests per user per 24 hours
+  - max 1 AI request per user per 10 minutes
+  - max 20 AI requests per IP per 15 minutes
+  - max 100 AI requests per service per 15 minutes
+
+- Financial mutation endpoints:
+  - max 20 transaction writes per hour per user
+  - max 10 budget changes per hour per user
+  - max 5 account deletion requests per 24 hours per user
+
+### 15.2 Rate-limit enforcement
+
+- Enforce rate limiting on backend routes only
+- Apply both per-IP and per-user limits where possible
+- Return clear 429 responses with a retry-after header
+- Log only rate-limit violations at a safe level
+- Do not allow bypassing limits by rotating tokens or using alternate IDs
+
+---
+
+## 16. Incident Response
+
+For a suspected or confirmed security incident:
+
+1. Contain the issue
+2. Restrict access to affected systems
+3. Revoke or rotate suspected compromised credentials
+4. Assess scope and impact
+5. Preserve evidence without exposing user data
+6. Remediate the vulnerable component
+7. Recover safely
+8. Notify affected users where legally required
+9. Review and document the cause
+
+Do not hide an incident or claim data was unaffected without evidence.
+
+---
 
 ## 17. Security Ownership
 
 The project maintainer is responsible for:
+- reviewing security-sensitive changes
+- updating dependencies and security controls
+- maintaining deployment security
+- ensuring user data protection
+- overseeing AI and data-privacy controls
+- ensuring security testing is performed before release
 
-- Reviewing security-sensitive changes.
-- Maintaining dependency updates and deployment configuration.
-- Ensuring security tests are included in the release process.
-- Reviewing access policies and third-party integrations.
-- Maintaining vulnerability-reporting and incident-response procedures.
-- Updating this policy as the application evolves.
-
-All contributors must avoid committing secrets, bypassing access controls, or introducing unreviewed handling of sensitive financial data.
+All contributors must follow this policy and must not commit secrets, bypass auth controls, or expose financial data.
 
 ---
 
-**Security is a release requirement, not a future enhancement.** Any feature that handles financial information must meet the relevant requirements in this policy before being enabled in production.
+## 18. Final Security Requirement
+
+The app is handling personal and financial data. Therefore:
+
+- the browser is not trusted
+- sessions are not to be shared across users
+- endpoints must be protected and enforced on the server
+- AI must be explicit, consent-based, and rate limited
+- file uploads must be validated and cleaned
+- logs must be minimal and safe
+- access control must be enforced at every layer
+- the product must protect users’ financial information as a core responsibility
+
+Security is not optional. It is a core part of the trust model for RandRoute.
+
+---
+
+## 19. Implementation Notes
+
+The following architecture is recommended for the production version:
+
+- Frontend: React or equivalent SPA
+- Backend: Express, NestJS, Next API, or similar trusted API layer
+- Database: Postgres with row-level security and ownership checks
+- Auth: secure HttpOnly cookie sessions with refresh rotation
+- AI: server-side only, explicit consent, rate limited
+- Upload handling: secure temp processing and cleanup
+- Logging: safe, minimal, structured, and redacted
+- Monitoring: rate-limit violations, repeated failed auth, suspicious access, AI abuse
+
+This policy is a minimum baseline. If a feature handles personal or financial information, it must be reviewed against this policy before release.

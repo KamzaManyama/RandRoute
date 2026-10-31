@@ -1,13 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { api, ApiError, apiRequest, type RequestOptions, type Session } from '../lib/api'
 import { AuthContext, type AuthContextValue, type AuthState } from './authContextValue'
+
+/*
+ * The session lives in HttpOnly cookies set by the backend. This code never
+ * holds an access or refresh token: it only knows whether you're signed in
+ * and your display name (SECURITY.md 5.2).
+ */
 
 // One refresh at a time, even if several callers (or React StrictMode) ask at once.
 let refreshInFlight: Promise<Session | null> | null = null
 function refreshOnce(): Promise<Session | null> {
   refreshInFlight ??= api.auth
     .refresh()
-    .then((res) => res.session)
     .catch((error: unknown) => {
       if (error instanceof ApiError && error.status === 401) return null
       throw error
@@ -20,49 +25,32 @@ function refreshOnce(): Promise<Session | null> {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({ status: 'loading', user: null })
-  const [recoveryToken, setRecoveryToken] = useState<string | null>(null)
-  // The access token lives in memory only (never localStorage).
-  const tokenRef = useRef<string | null>(null)
-  const refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const [recoveryReady, setRecoveryReady] = useState(false)
 
   const applySession = useCallback((session: Session | null) => {
-    function apply(next: Session | null) {
-      clearTimeout(refreshTimer.current)
-      if (!next) {
-        tokenRef.current = null
-        setState({ status: 'signedOut', user: null })
-        return
-      }
-      tokenRef.current = next.accessToken
-      setState({ status: 'signedIn', user: next.user })
-
-      // Refresh a minute before the access token expires.
-      const msUntilRefresh = Math.max(next.expiresAt * 1000 - Date.now() - 60_000, 5_000)
-      refreshTimer.current = setTimeout(() => {
-        refreshOnce()
-          .then(apply)
-          .catch(() => undefined) // offline: try again on the next request
-      }, msUntilRefresh)
-    }
-    apply(session)
+    setState(session ? { status: 'signedIn', user: session.user } : { status: 'signedOut', user: null })
   }, [])
 
-  // On first load, restore the session from the httpOnly refresh cookie.
+  // On first load, ask the backend whether the session cookie is still valid.
+  // Only applies while still loading, so it can't undo a sign-in that finished first (e.g. an email link).
   useEffect(() => {
     let cancelled = false
+    const settle = (session: Session | null) =>
+      !cancelled &&
+      setState((prev) =>
+        prev.status !== 'loading' ? prev : session ? { status: 'signedIn', user: session.user } : { status: 'signedOut', user: null },
+      )
     refreshOnce()
-      .then((session) => !cancelled && applySession(session))
-      .catch(() => !cancelled && applySession(null))
+      .then(settle)
+      .catch(() => settle(null))
     return () => {
       cancelled = true
-      clearTimeout(refreshTimer.current)
     }
   }, [applySession])
 
   const login = useCallback(
     async (email: string, password: string) => {
-      const { session } = await api.auth.login({ email, password })
-      applySession(session)
+      applySession(await api.auth.login({ email, password }))
     },
     [applySession],
   )
@@ -71,7 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (input: { email: string; password: string; displayName?: string; acceptedPolicies: true }) => {
       const result = await api.auth.register(input)
       if (result.status === 'signed_in') {
-        applySession(result.session)
+        applySession(result)
         return false
       }
       return true
@@ -80,41 +68,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 
   const logout = useCallback(async () => {
-    const token = tokenRef.current
     applySession(null)
-    await api.auth.logout(token).catch(() => undefined)
+    await api.auth.logout().catch(() => undefined)
   }, [applySession])
 
   const startSessionFromLink = useCallback(
     async (refreshToken: string) => {
-      const { session } = await api.auth.sessionFromLink(refreshToken)
-      applySession(session)
+      applySession(await api.auth.sessionFromLink(refreshToken))
     },
     [applySession],
   )
 
   const resetPassword = useCallback(
     async (password: string) => {
-      if (!recoveryToken) {
-        throw new ApiError(401, 'reset_link_invalid', 'Open the link from your password-reset email first.')
-      }
-      const result = await api.auth.resetPassword(recoveryToken, password)
-      setRecoveryToken(null)
-      applySession(result.session ?? null)
+      const result = await api.auth.resetPassword(password)
+      setRecoveryReady(false)
+      applySession(result.signedIn && result.user ? { signedIn: true, user: result.user } : null)
     },
-    [recoveryToken, applySession],
+    [applySession],
   )
 
+  /** Signed-in API call: the cookie goes along automatically; on 401, refresh once and retry. */
   const authRequest = useCallback(
-    async <T,>(path: string, options: Omit<RequestOptions, 'token'> = {}): Promise<T> => {
+    async <T,>(path: string, options: RequestOptions = {}): Promise<T> => {
       try {
-        return await apiRequest<T>(path, { ...options, token: tokenRef.current })
+        return await apiRequest<T>(path, options)
       } catch (error) {
         if (!(error instanceof ApiError) || error.status !== 401) throw error
         const session = await refreshOnce()
         applySession(session)
         if (!session) throw error
-        return apiRequest<T>(path, { ...options, token: session.accessToken })
+        return apiRequest<T>(path, options)
       }
     },
     [applySession],
@@ -127,12 +111,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       register,
       logout,
       startSessionFromLink,
-      recoveryToken,
-      setRecoveryToken,
+      applySession,
+      recoveryReady,
+      setRecoveryReady,
       resetPassword,
       authRequest,
     }),
-    [state, login, register, logout, startSessionFromLink, recoveryToken, resetPassword, authRequest],
+    [state, login, register, logout, startSessionFromLink, applySession, recoveryReady, resetPassword, authRequest],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

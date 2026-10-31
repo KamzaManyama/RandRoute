@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { Router, type Request } from "express";
 import multer from "multer";
-import { rateLimit } from "express-rate-limit";
+import { limiter, securityLog, WINDOWS } from "../middleware/security.js";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { SupabaseClients } from "../lib/supabase.js";
@@ -201,6 +201,9 @@ function toImportSummary(row: Record<string, any>) {
 const IMPORT_COLUMNS =
   "id, bank_format_key, period_start, period_end, status, transaction_count, imported_at, created_at, validation_summary, statement_sources(nickname)";
 
+/** Uploads above this size count as "heavy". */
+const HEAVY_UPLOAD_BYTES = 2 * 1024 * 1024;
+
 export function statementsRouter(supabase: SupabaseClients): Router {
   const router = Router();
   router.use(requireAuth(supabase));
@@ -209,15 +212,23 @@ export function statementsRouter(supabase: SupabaseClients): Router {
     storage: multer.memoryStorage(), // never written to disk
     limits: { fileSize: MAX_PDF_BYTES, files: 1, fields: 10 },
   });
-  const uploadLimit = rateLimit({
-    windowMs: 60 * 60 * 1000,
-    limit: 40,
-    standardHeaders: "draft-8",
-    legacyHeaders: false,
-    keyGenerator: (req) => req.auth?.userId ?? "anon",
-    handler: (_req, _res, next) =>
-      next(new HttpError(429, "rate_limited", "You've uploaded a lot of statements. Please wait a while and try again.")),
+  // SECURITY.md 15.1 — uploads: 5 per 15 minutes per IP, and at most 2 heavy (over 2 MB) per hour per user.
+  const uploadLimit = limiter({
+    name: "upload",
+    windowMs: 15 * WINDOWS.MINUTE,
+    limit: 5,
+    by: "ip",
+    message: "You've uploaded several statements in a short time. Please wait 15 minutes and try again.",
   });
+  const heavyUploadLimit = limiter({
+    name: "upload_heavy",
+    windowMs: WINDOWS.HOUR,
+    limit: 2,
+    by: "user",
+    skip: (req) => Number(req.get("content-length") ?? 0) <= HEAVY_UPLOAD_BYTES,
+    message: "You can upload 2 large statements (over 2 MB) an hour. Please try again later.",
+  });
+  const deleteLimit = limiter({ name: "transaction_writes", windowMs: WINDOWS.HOUR, limit: 20, by: "user", message: "Too many changes in a short time. Please wait a while and try again." });
 
   /** Bank formats the upload screen can offer. */
   router.get("/formats", (_req, res) => {
@@ -242,6 +253,7 @@ export function statementsRouter(supabase: SupabaseClients): Router {
   router.post(
     "/upload",
     uploadLimit,
+    heavyUploadLimit,
     (req, res, next) => {
       upload.single("file")(req, res, (err: unknown) => {
         if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
@@ -263,6 +275,8 @@ export function statementsRouter(supabase: SupabaseClients): Router {
       const bytes = new Uint8Array(file.buffer.buffer, file.buffer.byteOffset, file.buffer.byteLength);
       const isPdf = file.buffer.subarray(0, 5).toString("latin1") === "%PDF-";
       if (!isPdf) {
+        file.buffer.fill(0);
+        securityLog("upload_rejected", req, { reason: "not_a_pdf" });
         throw new HttpError(415, "not_a_pdf", "That file isn't a PDF. Download your statement as a PDF and try again.", {
           file: "Only PDF files are supported.",
         });
@@ -619,7 +633,7 @@ export function statementsRouter(supabase: SupabaseClients): Router {
   });
 
   /** Delete an import and every transaction saved from it. */
-  router.delete("/:id", async (req, res) => {
+  router.delete("/:id", deleteLimit, async (req, res) => {
     const { data, error } = await req.auth!.db.from("statement_imports").delete().eq("id", req.params.id).select("id");
     if (error) throw dbError("delete this statement");
     if (!data?.length) throw new HttpError(404, "not_found", "Statement not found.");

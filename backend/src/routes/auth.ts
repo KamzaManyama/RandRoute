@@ -1,16 +1,13 @@
-import { Router, type CookieOptions, type Request, type RequestHandler, type Response } from "express";
-import { rateLimit } from "express-rate-limit";
+import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import type { AuthError, Session, User } from "@supabase/supabase-js";
 import type { AppConfig } from "../config/env.js";
 import type { SupabaseClients } from "../lib/supabase.js";
+import type { SessionCookies } from "../lib/sessionCookies.js";
 import { HttpError } from "../middleware/errors.js";
-import { getBearerToken, requireAuth } from "../middleware/requireAuth.js";
+import { requireAuth } from "../middleware/requireAuth.js";
+import { limiter, securityLog, WINDOWS } from "../middleware/security.js";
 
-export const REFRESH_COOKIE = "rr_refresh";
-/** Custom header every auth call must send. Browsers can't add it cross-site without a CORS preflight. */
-export const CLIENT_HEADER = "x-randroute-client";
-const REFRESH_COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 /** A password-reset token must come from an email link opened within this window. */
 const RESET_LINK_MAX_AGE_S = 60 * 60;
 
@@ -54,6 +51,11 @@ const loginSchema = z.object({
 const emailOnlySchema = z.object({ email });
 const resetSchema = z.object({ password: newPassword });
 const sessionSchema = z.object({ refreshToken: z.string().min(10).max(4000) });
+const recoverySchema = z.object({ accessToken: z.string().min(10).max(4000) });
+const verifySchema = z.object({
+  tokenHash: z.string().min(10).max(500).regex(/^[A-Za-z0-9_-]+$/, "Invalid link."),
+  type: z.enum(["signup", "email", "recovery", "email_change", "invite", "magiclink"]),
+});
 
 function parse<T extends z.ZodType>(schema: T, body: unknown): z.infer<T> {
   const result = schema.safeParse(body ?? {});
@@ -70,20 +72,15 @@ function parse<T extends z.ZodType>(schema: T, body: unknown): z.infer<T> {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-type PublicUser = { id: string; email: string | null; displayName: string | null };
-type SessionResponse = { accessToken: string; expiresAt: number; user: PublicUser };
+/**
+ * The only user details an auth response carries. No user ID, email or token:
+ * the session itself lives in HttpOnly cookies (SECURITY.md 5.2, 12.2).
+ */
+type PublicUser = { displayName: string | null };
 
 function publicUser(user: User): PublicUser {
   const name = user.user_metadata?.display_name;
-  return { id: user.id, email: user.email ?? null, displayName: typeof name === "string" && name ? name : null };
-}
-
-function toSessionResponse(session: Session): SessionResponse {
-  return {
-    accessToken: session.access_token,
-    expiresAt: session.expires_at ?? Math.floor(Date.now() / 1000) + session.expires_in,
-    user: publicUser(session.user),
-  };
+  return { displayName: typeof name === "string" && name ? name : null };
 }
 
 function isRateLimited(error: AuthError): boolean {
@@ -106,6 +103,14 @@ function authMethods(accessToken: string): { method: string; timestamp: number }
   }
 }
 
+/** True when the token came from an email link (OTP / recovery) opened recently. */
+function fromRecentEmailLink(accessToken: string): boolean {
+  const now = Math.floor(Date.now() / 1000);
+  return authMethods(accessToken).some(
+    (m) => (m.method === "otp" || m.method === "recovery") && now - m.timestamp <= RESET_LINK_MAX_AGE_S,
+  );
+}
+
 const VERIFY_EMAIL_RESPONSE = {
   status: "verification_required",
   message:
@@ -116,47 +121,36 @@ const RESET_EMAIL_RESPONSE = {
   message: "If an account exists for that email, we've sent a link to reset your password.",
 } as const;
 
+const linkInvalid = () => new HttpError(401, "link_invalid", "This link has expired or was already used. Please sign in.");
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
-export function authRouter({ config, supabase }: { config: AppConfig; supabase: SupabaseClients }): Router {
+export function authRouter({ config, supabase, cookies }: { config: AppConfig; supabase: SupabaseClients; cookies: SessionCookies }): Router {
   const router = Router();
 
-  const cookieOptions: CookieOptions = {
-    httpOnly: true,
-    secure: config.cookies.secure,
-    sameSite: config.cookies.sameSite,
-    path: "/api/auth",
-  };
-  const setRefreshCookie = (res: Response, token: string) =>
-    res.cookie(REFRESH_COOKIE, token, { ...cookieOptions, maxAge: REFRESH_COOKIE_MAX_AGE_MS });
-  const clearRefreshCookie = (res: Response) => res.clearCookie(REFRESH_COOKIE, cookieOptions);
+  /** Puts the session in HttpOnly cookies and returns only the display name. */
   const startSession = (res: Response, session: Session) => {
-    setRefreshCookie(res, session.refresh_token);
-    return toSessionResponse(session);
+    cookies.set(res, session);
+    return { signedIn: true as const, user: publicUser(session.user) };
   };
 
-  // Blocks cross-site form posts against the cookie-based endpoints.
-  const requireClientHeader: RequestHandler = (req, _res, next) => {
-    if (req.get(CLIENT_HEADER) !== "web") {
-      return next(new HttpError(403, "forbidden", "Request blocked."));
-    }
-    next();
-  };
+  // SECURITY.md 15.1 — per-IP limits on auth endpoints.
+  const window15 = 15 * WINDOWS.MINUTE;
+  const loginLimit = limiter({ name: "login", windowMs: window15, limit: 10, by: "ip", message: "Too many sign-in attempts. Please wait 15 minutes and try again." });
+  const signupLimit = limiter({ name: "signup", windowMs: window15, limit: 5, by: "ip", message: "Too many sign-up attempts. Please wait 15 minutes and try again." });
+  const resetLimit = limiter({ name: "password_reset", windowMs: window15, limit: 5, by: "ip", message: "Too many password-reset attempts. Please wait 15 minutes and try again." });
+  const recoveryLimit = limiter({ name: "account_recovery", windowMs: window15, limit: 5, by: "ip", message: "Too many attempts. Please wait 15 minutes and try again." });
+  const linkLimit = limiter({ name: "email_link", windowMs: window15, limit: 10, by: "ip", message: "Too many attempts. Please wait 15 minutes and try again." });
 
-  // Stricter limit for endpoints that check passwords or send email.
-  const sensitiveLimit = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    limit: 20,
-    standardHeaders: "draft-8",
-    legacyHeaders: false,
-    handler: (_req, _res, next) => next(tooManyAttempts()),
+  /** CSRF token for this browser (also sets the HttpOnly CSRF cookie). Not an auth token. */
+  router.get("/csrf", (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ csrfToken: cookies.csrf(req, res) });
   });
 
-  router.use(requireClientHeader);
-
   /** Create an account. Same response whether or not the email is already registered. */
-  router.post("/register", sensitiveLimit, async (req, res) => {
+  router.post("/register", signupLimit, async (req, res) => {
     const body = parse(registerSchema, req.body);
     const { data, error } = await supabase.auth().auth.signUp({
       email: body.email,
@@ -197,14 +191,14 @@ export function authRouter({ config, supabase }: { config: AppConfig; supabase: 
 
     if (data.session) {
       // Email confirmation is switched off in Supabase: the user is signed in straight away.
-      res.status(201).json({ status: "signed_in", session: startSession(res, data.session) });
+      res.status(201).json({ status: "signed_in", ...startSession(res, data.session) });
       return;
     }
     res.status(202).json(VERIFY_EMAIL_RESPONSE);
   });
 
   /** Sign in with email and password. */
-  router.post("/login", sensitiveLimit, async (req, res) => {
+  router.post("/login", loginLimit, async (req, res) => {
     const body = parse(loginSchema, req.body);
     const { data, error } = await supabase.auth().auth.signInWithPassword(body);
 
@@ -218,62 +212,105 @@ export function authRouter({ config, supabase }: { config: AppConfig; supabase: 
       }
       if (isRateLimited(error)) throw tooManyAttempts();
       if (error.status && error.status >= 500) throw authUnavailable();
+      securityLog("login_failed", req);
       throw new HttpError(401, "invalid_credentials", "Incorrect email or password.");
     }
     if (!data.session) throw authUnavailable();
 
-    res.json({ session: startSession(res, data.session) });
+    res.json(startSession(res, data.session));
   });
 
-  /** Exchange the httpOnly refresh cookie for a new access token. */
+  /** Exchange the HttpOnly refresh cookie for new session cookies (refresh tokens rotate). */
   router.post("/refresh", async (req, res) => {
-    const refreshToken: unknown = req.cookies?.[REFRESH_COOKIE];
-    if (typeof refreshToken !== "string" || !refreshToken) {
+    const refreshToken = cookies.refreshToken(req);
+    if (!refreshToken) {
       throw new HttpError(401, "no_session", "Please sign in.");
     }
 
     const { data, error } = await supabase.auth().auth.refreshSession({ refresh_token: refreshToken });
     if (error || !data.session) {
       if (error && error.status && error.status >= 500) throw authUnavailable();
-      clearRefreshCookie(res);
+      // Expired, revoked, or a reused (rotated-out) refresh token.
+      cookies.clear(res);
       throw new HttpError(401, "session_expired", "Your session has expired. Please sign in again.");
     }
 
-    res.json({ session: startSession(res, data.session) });
+    res.json(startSession(res, data.session));
   });
 
   /**
-   * Start a session from the tokens in an email link (after verifying an email address).
-   * The refresh token is checked with Supabase before it is trusted.
+   * Open an email link that carries a one-time `token_hash` (recommended
+   * Supabase email templates). No session token ever appears in the URL.
+   * Recovery links get a short-lived reset cookie instead of a session.
    */
-  router.post("/session", async (req, res) => {
-    const body = parse(sessionSchema, req.body);
-    const { data, error } = await supabase.auth().auth.refreshSession({ refresh_token: body.refreshToken });
+  router.post("/verify", linkLimit, async (req, res) => {
+    const body = parse(verifySchema, req.body);
+    const { data, error } = await supabase.auth().auth.verifyOtp({ token_hash: body.tokenHash, type: body.type });
     if (error || !data.session) {
-      throw new HttpError(401, "link_invalid", "This link has expired or was already used. Please sign in.");
+      if (error && isRateLimited(error)) throw tooManyAttempts();
+      throw linkInvalid();
     }
-    res.json({ session: startSession(res, data.session) });
+    if (body.type === "recovery") {
+      cookies.setRecovery(res, data.session.access_token);
+      res.json({ next: "reset_password" });
+      return;
+    }
+    res.json({ next: "signed_in", type: body.type, ...startSession(res, data.session) });
   });
 
-  /** Sign out: revoke the session in Supabase and clear the cookie. */
-  router.post("/logout", async (req, res) => {
-    let accessToken = getBearerToken(req);
-    const refreshToken: unknown = req.cookies?.[REFRESH_COOKIE];
+  /**
+   * Older email links put tokens in the URL fragment. The page sends the
+   * refresh token here straight away (it is never stored in the browser), and
+   * it is checked with Supabase before it is trusted.
+   */
+  router.post("/session", linkLimit, async (req, res) => {
+    const body = parse(sessionSchema, req.body);
+    const { data, error } = await supabase.auth().auth.refreshSession({ refresh_token: body.refreshToken });
+    if (error || !data.session) throw linkInvalid();
+    res.json(startSession(res, data.session));
+  });
 
-    if (!accessToken && typeof refreshToken === "string" && refreshToken) {
+  /** Older password-reset links: swap the link's token for a short-lived HttpOnly reset cookie. */
+  router.post("/recovery", recoveryLimit, async (req, res) => {
+    const body = parse(recoverySchema, req.body);
+    const { data, error } = await supabase.auth().auth.getUser(body.accessToken);
+    if (error || !data.user) {
+      throw new HttpError(401, "reset_link_invalid", "This reset link has expired. Please request a new one.");
+    }
+    if (!fromRecentEmailLink(body.accessToken)) {
+      throw new HttpError(403, "reset_link_invalid", "Please use the link from your password-reset email.");
+    }
+    cookies.setRecovery(res, body.accessToken);
+    res.json({ next: "reset_password" });
+  });
+
+  /** Is a password-reset link open in this browser? (The reset page asks on load.) */
+  router.get("/recovery", (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ready: Boolean(cookies.recoveryToken(req)) });
+  });
+
+  /** Sign out: revoke the session in Supabase and clear every auth cookie. */
+  router.post("/logout", async (req, res) => {
+    let accessToken = cookies.accessToken(req);
+    const refreshToken = cookies.refreshToken(req);
+
+    if (!accessToken && refreshToken) {
       const { data } = await supabase.auth().auth.refreshSession({ refresh_token: refreshToken });
       accessToken = data.session?.access_token ?? null;
     }
     if (accessToken) {
+      // Revokes this session's refresh token, so the old cookies stop working everywhere.
       await supabase.admin.auth.admin.signOut(accessToken, "local").catch(() => undefined);
     }
 
-    clearRefreshCookie(res);
+    cookies.clear(res);
+    cookies.rotateCsrf(res);
     res.status(204).end();
   });
 
   /** Send a password-reset email. Never reveals whether the account exists. */
-  router.post("/forgot-password", sensitiveLimit, async (req, res) => {
+  router.post("/forgot-password", resetLimit, async (req, res) => {
     const body = parse(emailOnlySchema, req.body);
     const { error } = await supabase.auth().auth.resetPasswordForEmail(body.email, {
       redirectTo: config.supabase.authRedirectUrl,
@@ -286,7 +323,7 @@ export function authRouter({ config, supabase }: { config: AppConfig; supabase: 
   });
 
   /** Send a new verification email. Never reveals whether the account exists. */
-  router.post("/resend-verification", sensitiveLimit, async (req, res) => {
+  router.post("/resend-verification", recoveryLimit, async (req, res) => {
     const body = parse(emailOnlySchema, req.body);
     const { error } = await supabase.auth().auth.resend({
       type: "signup",
@@ -301,12 +338,12 @@ export function authRouter({ config, supabase }: { config: AppConfig; supabase: 
   });
 
   /**
-   * Set a new password using the token from a password-reset email.
-   * Only accepts tokens that came from an email link (amr = otp/recovery), not normal
-   * sign-in tokens, then signs out every other session and starts a fresh one.
+   * Set a new password using the HttpOnly reset cookie from a password-reset
+   * link. Only accepts tokens that came from an email link (amr = otp/recovery),
+   * then signs out every session and starts a fresh one.
    */
-  router.post("/reset-password", sensitiveLimit, async (req, res) => {
-    const recoveryToken = getBearerToken(req);
+  router.post("/reset-password", resetLimit, async (req, res) => {
+    const recoveryToken = cookies.recoveryToken(req);
     if (!recoveryToken) {
       throw new HttpError(401, "reset_link_invalid", "This reset link is invalid. Please request a new one.");
     }
@@ -314,14 +351,11 @@ export function authRouter({ config, supabase }: { config: AppConfig; supabase: 
 
     const { data: userData, error: userError } = await supabase.auth().auth.getUser(recoveryToken);
     if (userError || !userData.user) {
+      cookies.clearRecovery(res);
       throw new HttpError(401, "reset_link_invalid", "This reset link has expired. Please request a new one.");
     }
-
-    const now = Math.floor(Date.now() / 1000);
-    const fromEmailLink = authMethods(recoveryToken).some(
-      (m) => (m.method === "otp" || m.method === "recovery") && now - m.timestamp <= RESET_LINK_MAX_AGE_S,
-    );
-    if (!fromEmailLink) {
+    if (!fromRecentEmailLink(recoveryToken)) {
+      cookies.clearRecovery(res);
       throw new HttpError(403, "reset_link_invalid", "Please use the link from your password-reset email.");
     }
 
@@ -346,19 +380,19 @@ export function authRouter({ config, supabase }: { config: AppConfig; supabase: 
 
     // End every existing session (including the reset link's), then start a fresh one.
     await supabase.admin.auth.admin.signOut(recoveryToken, "global").catch(() => undefined);
+    cookies.clear(res);
 
     if (user.email) {
       const { data } = await supabase.auth().auth.signInWithPassword({ email: user.email, password: body.password });
       if (data.session) {
-        res.json({ status: "password_updated", session: startSession(res, data.session) });
+        res.json({ status: "password_updated", ...startSession(res, data.session) });
         return;
       }
     }
-    clearRefreshCookie(res);
     res.json({ status: "password_updated" });
   });
 
-  /** The signed-in user's profile. */
+  /** The signed-in user's basic profile. No user ID or email. */
   router.get("/me", requireAuth(supabase), async (req: Request, res) => {
     const auth = req.auth!;
     const { data, error } = await auth.db
@@ -369,8 +403,6 @@ export function authRouter({ config, supabase }: { config: AppConfig; supabase: 
 
     res.json({
       user: {
-        id: auth.userId,
-        email: auth.email ?? null,
         displayName: data?.display_name ?? null,
         currency: data?.currency ?? "ZAR",
         setupCompleted: Boolean(data?.setup_completed_at),

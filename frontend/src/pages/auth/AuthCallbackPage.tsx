@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../auth/useAuth'
-import { ApiError } from '../../lib/api'
+import { api, ApiError, type EmailLinkType } from '../../lib/api'
 import { FormAlert } from '../../components/forms'
 import { AuthLayout } from './AuthLayout'
 
 type Problem = { title: string; message: string; action: 'sign-in' | 'forgot' }
+
+const LINK_TYPES: EmailLinkType[] = ['signup', 'email', 'recovery', 'email_change', 'invite', 'magiclink']
+const isLinkType = (value: string | null): value is EmailLinkType => LINK_TYPES.includes(value as EmailLinkType)
 
 function describeLinkError(params: URLSearchParams): Problem {
   const code = params.get('error_code') ?? params.get('error') ?? ''
@@ -23,28 +26,37 @@ function describeLinkError(params: URLSearchParams): Problem {
   }
 }
 
+const brokenLink: Problem = { title: "This link didn't work", message: 'The link is incomplete. Please sign in.', action: 'sign-in' }
+
 /**
  * Landing page for links in Supabase emails (verify email, reset password,
  * change email).
- * Supabase puts the session in the URL fragment (#access_token=...); we read it,
- * wipe it from the address bar and history, then hand it to the backend.
+ *
+ * Preferred: the link carries a one-time `token_hash` in the query string. We
+ * send it to the backend, which checks it and sets HttpOnly cookies.
+ * Older links put tokens in the URL fragment; those are handed to the backend
+ * straight away too. Either way the address bar is wiped first and nothing is
+ * kept in the browser.
  */
 export function AuthCallbackPage() {
-  const { startSessionFromLink, setRecoveryToken } = useAuth()
+  const { startSessionFromLink, applySession, setRecoveryReady } = useAuth()
   const navigate = useNavigate()
   // Read the link once, on first render (before the address bar is cleaned).
   const [link] = useState(() => {
-    const params = new URLSearchParams(window.location.hash.slice(1) || window.location.search.slice(1))
-    const accessToken = params.get('access_token')
-    const refreshToken = params.get('refresh_token')
-    let linkProblem: Problem | null = null
+    const query = new URLSearchParams(window.location.search.slice(1))
+    const fragment = new URLSearchParams(window.location.hash.slice(1))
+    const params = fragment.toString() ? fragment : query
+    const tokenHash = query.get('token_hash')
+    const linkType = query.get('type')
+    const accessToken = fragment.get('access_token')
+    const refreshToken = fragment.get('refresh_token')
     // With "secure email change", the first of the two links only carries a message.
-    const halfwayEmailChange = !refreshToken && Boolean(params.get('message')) && !params.get('error')
+    const halfwayEmailChange = !tokenHash && !refreshToken && Boolean(params.get('message')) && !params.get('error')
+    let linkProblem: Problem | null = null
     if (params.get('error') || params.get('error_code')) linkProblem = describeLinkError(params)
-    else if (!halfwayEmailChange && !refreshToken && !(params.get('type') === 'recovery' && accessToken)) {
-      linkProblem = { title: "This link didn't work", message: 'The link is incomplete. Please sign in.', action: 'sign-in' }
-    }
-    return { type: params.get('type'), accessToken, refreshToken, linkProblem, halfwayEmailChange }
+    else if (tokenHash && !isLinkType(linkType)) linkProblem = brokenLink
+    else if (!tokenHash && !halfwayEmailChange && !refreshToken && !(fragment.get('type') === 'recovery' && accessToken)) linkProblem = brokenLink
+    return { tokenHash, linkType, type: fragment.get('type'), accessToken, refreshToken, linkProblem, halfwayEmailChange }
   })
   const [sessionProblem, setSessionProblem] = useState<Problem | null>(null)
   const problem = link.linkProblem ?? sessionProblem
@@ -53,35 +65,49 @@ export function AuthCallbackPage() {
   useEffect(() => {
     if (handled.current) return
     handled.current = true
-    // Remove tokens from the address bar so they don't stay in history.
+    // Remove codes and tokens from the address bar so they don't stay in history.
     window.history.replaceState(null, '', window.location.pathname)
     if (link.linkProblem || link.halfwayEmailChange) return
 
-    if (link.type === 'recovery' && link.accessToken) {
-      setRecoveryToken(link.accessToken)
+    const fail = (err: unknown) =>
+      setSessionProblem({
+        title: "This link didn't work",
+        message: err instanceof ApiError ? err.message : 'Please sign in.',
+        action: 'sign-in',
+      })
+    const signedIn = (type: string | null) =>
+      navigate(type === 'email_change' ? '/profile' : '/', {
+        replace: true,
+        state: { notice: type === 'email_change' ? 'Your sign-in email has been changed.' : 'Your email is verified. Welcome to RandRoute!' },
+      })
+    const toReset = () => {
+      setRecoveryReady(true)
       navigate('/reset-password', { replace: true })
+    }
+
+    if (link.tokenHash && isLinkType(link.linkType)) {
+      api.auth
+        .verify(link.tokenHash, link.linkType)
+        .then((result) => {
+          if (result.next === 'reset_password') return toReset()
+          applySession({ signedIn: true, user: result.user })
+          signedIn(result.type)
+        })
+        .catch(fail)
+      return
+    }
+
+    if (link.type === 'recovery' && link.accessToken) {
+      api.auth.recoveryFromLink(link.accessToken).then(toReset).catch(fail)
       return
     }
 
     if (link.refreshToken) {
       startSessionFromLink(link.refreshToken)
-        .then(() =>
-          navigate(link.type === 'email_change' ? '/profile' : '/', {
-            replace: true,
-            state: {
-              notice: link.type === 'email_change' ? 'Your sign-in email has been changed.' : 'Your email is verified. Welcome to RandRoute!',
-            },
-          }),
-        )
-        .catch((err: unknown) =>
-          setSessionProblem({
-            title: "This link didn't work",
-            message: err instanceof ApiError ? err.message : 'Please sign in.',
-            action: 'sign-in',
-          }),
-        )
+        .then(() => signedIn(link.type))
+        .catch(fail)
     }
-  }, [link, navigate, setRecoveryToken, startSessionFromLink])
+  }, [link, navigate, setRecoveryReady, startSessionFromLink, applySession])
 
   if (link.halfwayEmailChange) {
     return (

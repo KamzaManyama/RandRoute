@@ -1,14 +1,14 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../auth/useAuth'
-import { ApiError } from '../../lib/api'
+import { api, ApiError } from '../../lib/api'
 import { FormAlert, PasswordField, SubmitButton } from '../../components/forms'
 import { PASSWORD_HINT, passwordProblem } from '../../lib/validation'
 import { AuthLayout } from './AuthLayout'
 
 /** Choose a new password after opening the link in a reset email. */
 export function ResetPasswordPage() {
-  const { recoveryToken, resetPassword } = useAuth()
+  const { recoveryReady, setRecoveryReady, resetPassword } = useAuth()
   const navigate = useNavigate()
 
   const [password, setPassword] = useState('')
@@ -16,8 +16,33 @@ export function ResetPasswordPage() {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [error, setError] = useState<ApiError | null>(null)
   const [loading, setLoading] = useState(false)
+  // The reset token is an HttpOnly cookie; after a page reload, ask the backend whether it's still there.
+  const [checking, setChecking] = useState(!recoveryReady)
 
-  if (!recoveryToken) {
+  useEffect(() => {
+    if (recoveryReady) return
+    let cancelled = false
+    api.auth
+      .recoveryStatus()
+      .then((r) => !cancelled && r.ready && setRecoveryReady(true))
+      .catch(() => undefined)
+      .finally(() => !cancelled && setChecking(false))
+    return () => {
+      cancelled = true
+    }
+  }, [recoveryReady, setRecoveryReady])
+
+  if (checking && !recoveryReady) {
+    return (
+      <AuthLayout title="Just a moment…">
+        <p className="muted" role="status">
+          Checking your reset link.
+        </p>
+      </AuthLayout>
+    )
+  }
+
+  if (!recoveryReady) {
     return (
       <AuthLayout
         title="Open your reset link"

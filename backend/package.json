@@ -12,7 +12,8 @@
     "user:create": "node scripts/create-test-user.mjs",
     "fixtures": "tsx scripts/make-sample-statements.ts",
     "demo": "tsx scripts/seed-demo.ts",
-    "compile": "tsc -p tsconfig.json"
+    "compile": "tsc -p tsconfig.json",
+    "audit": "npm audit --omit=dev --audit-level=high"
   },
   "license": "UNLICENSED",
   "type": "module",

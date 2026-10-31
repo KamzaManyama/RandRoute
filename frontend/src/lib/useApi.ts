@@ -385,7 +385,7 @@ export function useApi() {
           authRequest<{ profile: ProfileData }>('/api/profile/ai-consent', { method: 'POST', body: { granted } }).then((r) => r.profile),
         changeEmail: (newEmail: string, password: string) =>
           authRequest<{ status: 'confirmation_sent'; newEmail: string }>('/api/profile/change-email', { method: 'POST', body: { newEmail, password } }),
-        export: (file: 'transactions' | 'budgets') => authRequest<Blob>(`/api/profile/export?file=${file}`, { responseType: 'blob' }),
+        export: (file: 'transactions' | 'budgets') => authRequest<Blob>(`/api/profile/export?file=${file}`, { responseType: 'blob', csrf: true }),
         deleteData: () => authRequest<null>('/api/profile/delete-data', { method: 'POST', body: { confirm: 'DELETE' } }),
         deleteAccount: (password: string) =>
           authRequest<null>('/api/profile/delete-account', { method: 'POST', body: { confirm: 'DELETE', password } }),

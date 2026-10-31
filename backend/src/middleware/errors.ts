@@ -39,6 +39,9 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
     return;
   }
 
-  console.error(`[error] ${req.method} ${req.path}: ${err instanceof Error ? err.message : "unknown error"}`);
-  res.status(500).json({ error: { code: "server_error", message: "Something went wrong. Please try again." } });
+  // Error name only: messages from libraries can contain user data.
+  console.error(JSON.stringify({ level: "error", requestId: req.requestId ?? null, method: req.method, route: req.path, error: err instanceof Error ? err.name : "unknown" }));
+  res.status(500).json({
+    error: { code: "server_error", message: "Something went wrong. Please try again.", ...(req.requestId ? { reference: req.requestId } : {}) },
+  });
 };

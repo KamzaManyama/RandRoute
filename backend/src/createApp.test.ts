@@ -52,7 +52,7 @@ describe("health routes", () => {
 
 describe("security basics", () => {
   it("returns JSON 404 for unknown routes", async () => {
-    const res = await request(buildApp()).get("/api/nope");
+    const res = await request(buildApp()).get("/api/nope").set("X-RandRoute-Client", "web");
     expect(res.status).toBe(404);
     expect(res.body.error.code).toBe("not_found");
   });
@@ -78,5 +78,63 @@ describe("security basics", () => {
 
     const blocked = await request(buildApp()).get("/api/health").set("Origin", "https://evil.example");
     expect(blocked.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+});
+
+describe("SECURITY.md web controls", () => {
+  it("sets the required security headers and never caches API responses", async () => {
+    const res = await request(buildApp()).get("/api/health");
+    expect(res.headers["content-security-policy"]).toContain("default-src 'none'");
+    expect(res.headers["content-security-policy"]).toContain("frame-ancestors 'none'");
+    expect(res.headers["strict-transport-security"]).toMatch(/max-age=63072000; includeSubDomains; preload/);
+    expect(res.headers["x-frame-options"]).toBe("DENY");
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
+    expect(res.headers["referrer-policy"]).toBe("no-referrer");
+    expect(res.headers["permissions-policy"]).toContain("camera=()");
+    expect(res.headers["cache-control"]).toBe("no-store");
+    expect(res.headers["x-request-id"]).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("does not let other sites send the client header or a token header", async () => {
+    const res = await request(buildApp()).options("/api/auth/login").set("Origin", "http://localhost:4173").set("Access-Control-Request-Method", "POST");
+    const allowed = String(res.headers["access-control-allow-headers"]).toLowerCase();
+    expect(allowed).toContain("x-csrf-token");
+    expect(allowed).not.toContain("authorization");
+  });
+
+  it("blocks state-changing requests from another origin", async () => {
+    const res = await request(buildApp()).post("/api/auth/logout").set("Origin", "https://evil.example").set("X-RandRoute-Client", "web");
+    expect(res.status).toBe(403);
+  });
+
+  it("needs a CSRF token for every state-changing request", async () => {
+    const res = await request(buildApp()).post("/api/auth/logout").set("X-RandRoute-Client", "web");
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe("csrf_invalid");
+  });
+
+  it("refuses production config without Secure cookies", () => {
+    expect(() =>
+      loadConfig({
+        NODE_ENV: "production",
+        SUPABASE_URL: "https://example.supabase.co",
+        SUPABASE_PUBLISHABLE_KEY: "sb_publishable_0123456789abcdef",
+        SUPABASE_SECRET_KEY: "sb_secret_0123456789abcdef",
+        FRONTEND_ORIGIN: "https://randroute.example",
+        COOKIE_SECURE: "false",
+      }),
+    ).toThrow(/Secure/);
+  });
+
+  it("does not allow cross-site cookies", () => {
+    expect(() =>
+      loadConfig({
+        NODE_ENV: "test",
+        SUPABASE_URL: "https://example.supabase.co",
+        SUPABASE_PUBLISHABLE_KEY: "sb_publishable_0123456789abcdef",
+        SUPABASE_SECRET_KEY: "sb_secret_0123456789abcdef",
+        COOKIE_SAMESITE: "none",
+      }),
+    ).toThrow(/COOKIE_SAMESITE/);
   });
 });

@@ -5,6 +5,7 @@ import { loadConfig } from "../config/env.js";
 import type { GeminiService } from "../lib/gemini.js";
 import type { SupabaseClients } from "../lib/supabase.js";
 import { fakeDb } from "../test/fakeDb.js";
+import { asWebApp } from "../test/session.js";
 import { limitStatus } from "../finance/rules.js";
 import { savingsIdeas } from "../finance/insights.js";
 import { AI_POLICY_VERSION } from "./profile.js";
@@ -26,7 +27,7 @@ const tables = (over: Record<string, unknown[]> = {}) => ({
   ],
   statement_imports: [{ status: "imported", period_start: "2026-09-01", period_end: "2026-09-30", validation_summary: {} }],
   monthly_budgets: [],
-  user_preferences: [{ ai_consent_status: "granted", ai_consent_policy_version: AI_POLICY_VERSION }],
+  user_preferences: [{ ai_consent_status: "granted", ai_consent_policy_version: AI_POLICY_VERSION, setup_completed_at: "2026-09-01T00:00:00Z" }],
   ai_requests: [],
   ...over,
 });
@@ -61,8 +62,8 @@ function build({ aiEnabled = true, data = tables(), password = "right", filter =
   const gemini: GeminiService = { isEnabled: aiEnabled, generateJson: generateJson as GeminiService["generateJson"] };
   const app = createApp({ config, supabase, gemini });
   const call = (method: "get" | "post" | "put", path: string) =>
-    request(app)[method](path).set("X-RandRoute-Client", "web").set("Authorization", "Bearer t");
-  return { call, generateJson, writes, db, adminAuth, updateUser };
+    asWebApp(request(app)[method](path));
+  return { call, generateJson, writes, db, adminAuth, updateUser, app };
 }
 
 describe("saving opportunities (calculated by the app)", () => {
@@ -117,7 +118,7 @@ describe("AI coach", () => {
   });
 
   it("needs consent to the current AI policy", async () => {
-    const { call, generateJson } = build({ data: tables({ user_preferences: [{ ai_consent_status: "granted", ai_consent_policy_version: "old" }] }) });
+    const { call, generateJson } = build({ data: tables({ user_preferences: [{ ai_consent_status: "granted", ai_consent_policy_version: "old", setup_completed_at: "2026-09-01T00:00:00Z" }] }) });
     const res = await call("post", "/api/coach").send({ month: "2026-09" });
     expect(res.status).toBe(403);
     expect(res.body.error.code).toBe("consent_required");
@@ -212,6 +213,88 @@ describe("AI coach", () => {
       expect(res.status).toBe(404);
     }
     expect(generateJson).not.toHaveBeenCalled();
+  });
+});
+
+describe("SECURITY.md AI and mutation limits", () => {
+  const minutesAgo = (m: number) => new Date(Date.now() - m * 60 * 1000).toISOString();
+
+  it("allows 5 AI requests per user per day", async () => {
+    const rows = Array.from({ length: 5 }, (_, i) => ({ status: "failed", created_at: minutesAgo(60 * (i + 2)) }));
+    const { call, generateJson } = build({ data: tables({ ai_requests: rows }) });
+    const res = await call("post", "/api/coach").send({ month: "2026-09" });
+    expect(res.status).toBe(429);
+    expect(res.body.error.code).toBe("ai_quota");
+    expect(Number(res.headers["retry-after"])).toBeGreaterThan(0);
+    expect(generateJson).not.toHaveBeenCalled();
+  });
+
+  it("waits 10 minutes after an AI answer before the next one", async () => {
+    const { call, generateJson } = build({ data: tables({ ai_requests: [{ status: "ok", created_at: minutesAgo(3) }] }) });
+    const res = await call("post", "/api/coach").send({ month: "2026-09" });
+    expect(res.status).toBe(429);
+    expect(res.body.error.code).toBe("ai_cooldown");
+    expect(res.body.error.message).toMatch(/once every 10 minutes/);
+    const retry = Number(res.headers["retry-after"]);
+    expect(retry).toBeGreaterThan(5 * 60);
+    expect(retry).toBeLessThanOrEqual(7 * 60);
+    expect(generateJson).not.toHaveBeenCalled();
+  });
+
+  it("lets a failed AI attempt be retried straight away", async () => {
+    const { call } = build({ data: tables({ ai_requests: [{ status: "failed", created_at: minutesAgo(1) }] }) });
+    expect((await call("post", "/api/coach").send({ month: "2026-09" })).status).toBe(200);
+  });
+
+  it("needs setup to be finished before AI runs", async () => {
+    const { call, generateJson } = build({ data: tables({ user_preferences: [{ ai_consent_status: "granted", ai_consent_policy_version: AI_POLICY_VERSION, setup_completed_at: null }] }) });
+    const res = await call("post", "/api/coach").send({ month: "2026-09" });
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe("setup_required");
+    expect(generateJson).not.toHaveBeenCalled();
+  });
+
+  it("caps AI calls from one IP at 20 per 15 minutes", async () => {
+    const { call } = build({ aiEnabled: false });
+    for (let i = 0; i < 20; i++) expect((await call("post", "/api/coach").send({ month: "2026-09" })).status).toBe(503);
+    expect((await call("post", "/api/coach").send({ month: "2026-09" })).status).toBe(429);
+  });
+
+  it("needs the CSRF token for exports", async () => {
+    const { call } = build();
+    const res = await call("get", "/api/profile/export?file=transactions").set("X-CSRF-Token", "x");
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe("csrf_invalid");
+  });
+
+  it("allows 10 budget changes per hour per user", async () => {
+    const { call } = build();
+    const body = { expectedIncomeMinor: null, savingsTargetMinor: null, limits: [] };
+    for (let i = 0; i < 10; i++) expect((await call("put", "/api/budgets/2026-09").send(body)).status).toBe(200);
+    expect((await call("put", "/api/budgets/2026-09").send(body)).status).toBe(429);
+  });
+
+  it("allows 5 account-deletion requests per day per user", async () => {
+    const { call } = build();
+    for (let i = 0; i < 5; i++) expect((await call("post", "/api/profile/delete-account").send({ confirm: "DELETE", password: "nope" })).status).toBe(401);
+    expect((await call("post", "/api/profile/delete-account").send({ confirm: "DELETE", password: "nope" })).status).toBe(429);
+  });
+
+  it("clears every session cookie when the account is deleted", async () => {
+    const { call } = build();
+    const res = await call("post", "/api/profile/delete-account").send({ confirm: "DELETE", password: "right" });
+    expect(res.status).toBe(204);
+    const cookies = ([] as string[]).concat(res.headers["set-cookie"] ?? []);
+    for (const name of ["rr_access", "rr_refresh"]) {
+      expect(cookies.some((c) => c.startsWith(`${name}=`) && /Expires=Thu, 01 Jan 1970/.test(c))).toBe(true);
+    }
+  });
+});
+
+describe("AI output is treated as untrusted", () => {
+  it("strips HTML, links and markdown from AI text", async () => {
+    const { cleanAiText } = await import("../ai/coach.js");
+    expect(cleanAiText('<script>alert(1)</script>**Save** [here](https://x.example) now https://evil.example')).toBe("alert(1)Save here now");
   });
 });
 

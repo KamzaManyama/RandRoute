@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { SupabaseClients } from "../lib/supabase.js";
 import { HttpError } from "../middleware/errors.js";
 import { requireAuth } from "../middleware/requireAuth.js";
+import { limiter, WINDOWS } from "../middleware/security.js";
 import { fetchImports, fetchTransactions } from "../finance/queries.js";
 import { coverageFor, isMonth, limitStatus, monthRange, shiftMonth, summarise } from "../finance/rules.js";
 
@@ -75,6 +76,8 @@ async function loadLatestPlanBefore(db: SupabaseClient, month: string): Promise<
 export function budgetsRouter(supabase: SupabaseClients): Router {
   const router = Router();
   router.use(requireAuth(supabase));
+  // SECURITY.md 15.1 — at most 10 budget changes per hour per user.
+  const budgetLimit = limiter({ name: "budget_changes", windowMs: WINDOWS.HOUR, limit: 10, by: "user", message: "You've changed your budget a lot in a short time. Please wait a while and try again." });
 
   /** Screen 12 — a month's plan compared with qualifying spending. */
   router.get("/:month", async (req, res) => {
@@ -167,7 +170,7 @@ export function budgetsRouter(supabase: SupabaseClients): Router {
   });
 
   /** Screen 13 — save the whole plan for a month (atomic). */
-  router.put("/:month", async (req, res) => {
+  router.put("/:month", budgetLimit, async (req, res) => {
     const month = monthParam(req.params.month);
     const body = parse(saveSchema, req.body);
     const { data, error } = await req.auth!.db.rpc("save_budget", {
@@ -189,7 +192,7 @@ export function budgetsRouter(supabase: SupabaseClients): Router {
   });
 
   /** Copy the latest earlier plan into this month (only if this month has none). */
-  router.post("/:month/copy-previous", async (req, res) => {
+  router.post("/:month/copy-previous", budgetLimit, async (req, res) => {
     const db = req.auth!.db;
     const month = monthParam(req.params.month);
     const [current, previous] = await Promise.all([loadBudget(db, month), loadLatestPlanBefore(db, month)]);
@@ -210,7 +213,7 @@ export function budgetsRouter(supabase: SupabaseClients): Router {
   });
 
   /** Remove a month's plan (spending is untouched). */
-  router.delete("/:month", async (req, res) => {
+  router.delete("/:month", budgetLimit, async (req, res) => {
     const month = monthParam(req.params.month);
     const { error } = await req.auth!.db.from("monthly_budgets").delete().eq("month", `${month}-01`);
     if (error) throw dbError("remove this budget");

@@ -121,7 +121,8 @@ describe('Upload', () => {
     const upload = calls.find((c) => c.path === '/api/statements/upload')!
     expect(upload.body).toBeInstanceOf(FormData)
     expect((upload.body as FormData).get('bankFormat')).toBe('fnb')
-    expect(upload.headers.get('Authorization')).toBe('Bearer test-access-token')
+    expect(upload.headers.get('Authorization')).toBeNull()
+    expect(upload.headers.get('X-CSRF-Token')).toBe('test-csrf-token')
   })
 
   it('shows why a PDF could not be read', async () => {

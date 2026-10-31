@@ -1,5 +1,5 @@
 import { createContext } from 'react'
-import type { RequestOptions, SessionUser } from '../lib/api'
+import type { RequestOptions, Session, SessionUser } from '../lib/api'
 
 export type AuthState =
   | { status: 'loading'; user: null }
@@ -11,14 +11,16 @@ export type AuthContextValue = AuthState & {
   /** Returns true if the user still needs to verify their email. */
   register: (input: { email: string; password: string; displayName?: string; acceptedPolicies: true }) => Promise<boolean>
   logout: () => Promise<void>
-  /** Start a session from the refresh token in an email-verification link. */
+  /** Older email links: send the link's refresh token to the backend, which sets the session cookies. */
   startSessionFromLink: (refreshToken: string) => Promise<void>
-  /** Token from a password-reset link, kept in memory only. */
-  recoveryToken: string | null
-  setRecoveryToken: (token: string | null) => void
+  /** Mark the user signed in after the backend has set session cookies (e.g. a verified email link). */
+  applySession: (session: Session | null) => void
+  /** True once a password-reset link has been opened (the reset token itself is an HttpOnly cookie). */
+  recoveryReady: boolean
+  setRecoveryReady: (ready: boolean) => void
   resetPassword: (password: string) => Promise<void>
-  /** Signed-in API call: adds the access token and retries once after refreshing it. */
-  authRequest: <T>(path: string, options?: Omit<RequestOptions, 'token'>) => Promise<T>
+  /** Signed-in API call: cookies are sent automatically; refreshes once on 401. */
+  authRequest: <T>(path: string, options?: RequestOptions) => Promise<T>
 }
 
 export const AuthContext = createContext<AuthContextValue | null>(null)

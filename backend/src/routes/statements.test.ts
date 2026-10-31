@@ -10,6 +10,7 @@ import { loadConfig } from "../config/env.js";
 import type { GeminiService } from "../lib/gemini.js";
 import type { SupabaseClients } from "../lib/supabase.js";
 import { fakeDb } from "../test/fakeDb.js";
+import { asWebApp } from "../test/session.js";
 import { buildStatementPdf, buildTablePdf, capitecColumns, fnbStyle } from "../statements/fixtures.js";
 
 const env = {
@@ -32,7 +33,7 @@ function build(tables: Record<string, unknown[]> = {}, rpc: Record<string, unkno
   } as unknown as SupabaseClients;
   const gemini: GeminiService = { isEnabled: false, generateJson: async () => ({}) };
   const app = createApp({ config: loadConfig(env), supabase, gemini });
-  const call = (method: "get" | "post", path: string) => request(app)[method](path).set("X-RandRoute-Client", "web").set("Authorization", "Bearer t");
+  const call = (method: "get" | "post", path: string) => asWebApp(request(app)[method](path));
   return { call, writes, db };
 }
 

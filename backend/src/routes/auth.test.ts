@@ -4,6 +4,7 @@ import { createApp } from "../createApp.js";
 import { loadConfig } from "../config/env.js";
 import { createGeminiService } from "../lib/gemini.js";
 import type { SupabaseClients } from "../lib/supabase.js";
+import { asWebApp, TEST_CSRF } from "../test/session.js";
 
 const config = loadConfig({
   NODE_ENV: "test",
@@ -33,6 +34,7 @@ const auth = {
   resetPasswordForEmail: vi.fn(),
   resend: vi.fn(),
   getUser: vi.fn(),
+  verifyOtp: vi.fn(),
 };
 const adminAuth = { signOut: vi.fn(), updateUserById: vi.fn() };
 const prefsQuery = { maybeSingle: vi.fn() };
@@ -44,12 +46,20 @@ const supabase = {
 } as unknown as SupabaseClients;
 
 const app = () => createApp({ config, supabase, gemini: createGeminiService(config.ai) });
-const post = (path: string, body?: object) =>
-  request(app()).post(`/api/auth${path}`).set("X-RandRoute-Client", "web").send(body);
+/** A web-app request with no session yet (CSRF token, no access cookie). */
+const post = (path: string, body?: object, cookies: string[] = []) =>
+  asWebApp(request(app()).post(`/api/auth${path}`), { access: null, cookies }).send(body);
 
-function refreshCookie(res: request.Response): string | undefined {
-  const cookies = ([] as string[]).concat(res.headers["set-cookie"] ?? []);
-  return cookies.find((c) => c.startsWith("rr_refresh="));
+const setCookies = (res: request.Response) => ([] as string[]).concat(res.headers["set-cookie"] ?? []);
+const cookie = (res: request.Response, name: string) => setCookies(res).find((c) => c.startsWith(`${name}=`));
+const cleared = /Expires=Thu, 01 Jan 1970/;
+
+/** No response body may ever carry a token, the user's ID or email. */
+function expectNoSecrets(res: request.Response) {
+  const body = JSON.stringify(res.body ?? {});
+  for (const secret of ["access-1", "access-2", "access-new", "refresh-1", "refresh-2", "refresh-new", USER.id, USER.email, "accessToken", "expiresAt"]) {
+    expect(body).not.toContain(secret);
+  }
 }
 
 beforeEach(() => {
@@ -59,9 +69,42 @@ beforeEach(() => {
 
 describe("cross-site protection", () => {
   it("rejects auth calls without the client header", async () => {
-    const res = await request(app()).post("/api/auth/login").send({ email: USER.email, password: "x" });
+    const res = await request(app()).post("/api/auth/login").set("Cookie", `rr_csrf=${TEST_CSRF}`).set("X-CSRF-Token", TEST_CSRF).send({ email: USER.email, password: "x" });
     expect(res.status).toBe(403);
     expect(auth.signInWithPassword).not.toHaveBeenCalled();
+  });
+
+  it("rejects sign-in without a matching CSRF token", async () => {
+    const missing = await asWebApp(request(app()).post("/api/auth/login"), { access: null, csrf: false }).send({ email: USER.email, password: "x" });
+    expect(missing.status).toBe(403);
+    expect(missing.body.error.code).toBe("csrf_invalid");
+    const wrong = await asWebApp(request(app()).post("/api/auth/login"), { access: null, csrf: false })
+      .set("X-CSRF-Token", "d".repeat(43))
+      .send({ email: USER.email, password: "x" });
+    expect(wrong.status).toBe(403);
+    expect(auth.signInWithPassword).not.toHaveBeenCalled();
+  });
+
+  it("rejects requests from another site", async () => {
+    const res = await post("/login", { email: USER.email, password: "x" }).set("Origin", "https://evil.example");
+    expect(res.status).toBe(403);
+    expect(auth.signInWithPassword).not.toHaveBeenCalled();
+  });
+
+  it("issues a CSRF token in an HttpOnly cookie", async () => {
+    const res = await request(app()).get("/api/auth/csrf").set("X-RandRoute-Client", "web");
+    expect(res.status).toBe(200);
+    expect(res.body.csrfToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    const c = cookie(res, "rr_csrf")!;
+    expect(c).toContain(res.body.csrfToken);
+    expect(c).toMatch(/HttpOnly/i);
+    expect(c).toMatch(/SameSite=Strict/i);
+  });
+
+  it("keeps the CSRF token stable for this browser", async () => {
+    const res = await request(app()).get("/api/auth/csrf").set("X-RandRoute-Client", "web").set("Cookie", `rr_csrf=${TEST_CSRF}`);
+    expect(res.body.csrfToken).toBe(TEST_CSRF);
+    expect(cookie(res, "rr_csrf")).toBeUndefined();
   });
 });
 
@@ -111,30 +154,46 @@ describe("POST /register", () => {
     expect(res.body.status).toBe("verification_required");
   });
 
-  it("signs in immediately when email confirmation is off", async () => {
+  it("signs in immediately when email confirmation is off, using cookies only", async () => {
     auth.signUp.mockResolvedValue({ data: { user: USER, session: session() }, error: null });
     const res = await post("/register", { email: USER.email, password: "Passw0rd!", acceptedPolicies: true });
     expect(res.status).toBe(201);
-    expect(res.body.session.accessToken).toBe("access-1");
-    expect(refreshCookie(res)).toBeDefined();
+    expect(res.body).toEqual({ status: "signed_in", signedIn: true, user: { displayName: "Maredi" } });
+    expect(cookie(res, "rr_access")).toMatch(/^rr_access=access-1/);
+    expect(cookie(res, "rr_refresh")).toBeDefined();
+    expectNoSecrets(res);
+  });
+
+  it("allows 5 sign-ups per 15 minutes per IP", async () => {
+    auth.signUp.mockResolvedValue({ data: { user: USER, session: null }, error: null });
+    const a = app();
+    const send = () => asWebApp(request(a).post("/api/auth/register"), { access: null }).send({ email: USER.email, password: "Passw0rd!", acceptedPolicies: true });
+    for (let i = 0; i < 5; i++) expect((await send()).status).toBe(202);
+    const blocked = await send();
+    expect(blocked.status).toBe(429);
+    expect(Number(blocked.headers["retry-after"])).toBeGreaterThan(0);
   });
 });
 
 describe("POST /login", () => {
-  it("returns an access token and sets an httpOnly refresh cookie", async () => {
+  it("puts the session in HttpOnly cookies and returns only the display name", async () => {
     auth.signInWithPassword.mockResolvedValue({ data: { session: session() }, error: null });
-    const res = await post("/login", { email: USER.email, password: "Passw0rd!", acceptedPolicies: true });
+    const res = await post("/login", { email: USER.email, password: "Passw0rd!" });
     expect(res.status).toBe(200);
-    expect(res.body.session).toEqual({
-      accessToken: "access-1",
-      expiresAt: 2_000_000_000,
-      user: { id: "user-1", email: USER.email, displayName: "Maredi" },
-    });
-    expect(JSON.stringify(res.body)).not.toContain("refresh-1");
-    const cookie = refreshCookie(res)!;
-    expect(cookie).toMatch(/HttpOnly/i);
-    expect(cookie).toMatch(/Path=\/api\/auth/);
-    expect(cookie).toMatch(/SameSite=Lax/i);
+    expect(res.body).toEqual({ signedIn: true, user: { displayName: "Maredi" } });
+    expectNoSecrets(res);
+
+    const access = cookie(res, "rr_access")!;
+    expect(access).toMatch(/^rr_access=access-1;/);
+    expect(access).toMatch(/HttpOnly/i);
+    expect(access).toMatch(/Path=\//);
+    expect(access).toMatch(/SameSite=Strict/i);
+    expect(access).toMatch(/Max-Age=3600/);
+
+    const refresh = cookie(res, "rr_refresh")!;
+    expect(refresh).toMatch(/HttpOnly/i);
+    expect(refresh).toMatch(/Path=\/api\/auth/);
+    expect(refresh).toMatch(/SameSite=Strict/i);
   });
 
   it("uses one generic message for wrong email or password", async () => {
@@ -146,15 +205,23 @@ describe("POST /login", () => {
 
   it("tells unverified users to check their email", async () => {
     auth.signInWithPassword.mockResolvedValue({ data: { session: null }, error: authError("email_not_confirmed") });
-    const res = await post("/login", { email: USER.email, password: "Passw0rd!", acceptedPolicies: true });
+    const res = await post("/login", { email: USER.email, password: "Passw0rd!" });
     expect(res.status).toBe(403);
     expect(res.body.error.code).toBe("email_not_confirmed");
   });
 
   it("passes on Supabase rate limits as 429", async () => {
     auth.signInWithPassword.mockResolvedValue({ data: { session: null }, error: authError("over_request_rate_limit", 429) });
-    const res = await post("/login", { email: USER.email, password: "Passw0rd!", acceptedPolicies: true });
+    const res = await post("/login", { email: USER.email, password: "Passw0rd!" });
     expect(res.status).toBe(429);
+  });
+
+  it("allows 10 sign-in attempts per 15 minutes per IP", async () => {
+    auth.signInWithPassword.mockResolvedValue({ data: { session: null }, error: authError("invalid_credentials") });
+    const a = app();
+    const send = () => asWebApp(request(a).post("/api/auth/login"), { access: null }).send({ email: USER.email, password: "wrong" });
+    for (let i = 0; i < 10; i++) expect((await send()).status).toBe(401);
+    expect((await send()).status).toBe(429);
   });
 });
 
@@ -165,29 +232,78 @@ describe("POST /refresh", () => {
     expect(auth.refreshSession).not.toHaveBeenCalled();
   });
 
-  it("rotates the cookie and returns a new access token", async () => {
+  it("rotates both cookies and returns no tokens", async () => {
     auth.refreshSession.mockResolvedValue({ data: { session: session("refresh-2", "access-2") }, error: null });
-    const res = await post("/refresh").set("Cookie", "rr_refresh=refresh-1");
+    const res = await post("/refresh", undefined, ["rr_refresh=refresh-1"]);
     expect(res.status).toBe(200);
     expect(auth.refreshSession).toHaveBeenCalledWith({ refresh_token: "refresh-1" });
-    expect(res.body.session.accessToken).toBe("access-2");
-    expect(refreshCookie(res)).toMatch(/^rr_refresh=refresh-2/);
+    expect(cookie(res, "rr_refresh")).toMatch(/^rr_refresh=refresh-2/);
+    expect(cookie(res, "rr_access")).toMatch(/^rr_access=access-2/);
+    expectNoSecrets(res);
   });
 
-  it("clears the cookie when the session has expired", async () => {
+  it("clears every session cookie when the session has expired or been revoked", async () => {
     auth.refreshSession.mockResolvedValue({ data: { session: null }, error: authError("refresh_token_not_found") });
-    const res = await post("/refresh").set("Cookie", "rr_refresh=old");
+    const res = await post("/refresh", undefined, ["rr_refresh=old"]);
     expect(res.status).toBe(401);
-    expect(refreshCookie(res)).toMatch(/Expires=Thu, 01 Jan 1970/);
+    expect(cookie(res, "rr_refresh")).toMatch(cleared);
+    expect(cookie(res, "rr_access")).toMatch(cleared);
   });
 });
 
 describe("POST /logout", () => {
-  it("revokes the session and clears the cookie", async () => {
-    const res = await post("/logout").set("Authorization", "Bearer access-1");
+  it("revokes the session in Supabase and clears every auth cookie", async () => {
+    const res = await post("/logout", undefined, ["rr_access=access-1", "rr_refresh=refresh-1"]);
     expect(res.status).toBe(204);
     expect(adminAuth.signOut).toHaveBeenCalledWith("access-1", "local");
-    expect(refreshCookie(res)).toMatch(/Expires=Thu, 01 Jan 1970/);
+    expect(cookie(res, "rr_refresh")).toMatch(cleared);
+    expect(cookie(res, "rr_access")).toMatch(cleared);
+    expect(cookie(res, "rr_csrf")).not.toContain(TEST_CSRF); // a fresh CSRF token
+  });
+
+  it("ignores a Bearer header", async () => {
+    const res = await post("/logout").set("Authorization", "Bearer access-1");
+    expect(res.status).toBe(204);
+    expect(adminAuth.signOut).not.toHaveBeenCalled();
+  });
+});
+
+describe("email links", () => {
+  it("opens a token_hash link and signs in with cookies", async () => {
+    auth.verifyOtp.mockResolvedValue({ data: { session: session(), user: USER }, error: null });
+    const res = await post("/verify", { tokenHash: "pkce_abcdef0123456789", type: "signup" });
+    expect(res.status).toBe(200);
+    expect(auth.verifyOtp).toHaveBeenCalledWith({ token_hash: "pkce_abcdef0123456789", type: "signup" });
+    expect(res.body).toEqual({ next: "signed_in", type: "signup", signedIn: true, user: { displayName: "Maredi" } });
+    expect(cookie(res, "rr_access")).toBeDefined();
+    expectNoSecrets(res);
+  });
+
+  it("turns a recovery link into a short-lived HttpOnly reset cookie, not a session", async () => {
+    auth.verifyOtp.mockResolvedValue({ data: { session: session(), user: USER }, error: null });
+    const res = await post("/verify", { tokenHash: "pkce_abcdef0123456789", type: "recovery" });
+    expect(res.body).toEqual({ next: "reset_password" });
+    const recovery = cookie(res, "rr_recovery")!;
+    expect(recovery).toMatch(/HttpOnly/i);
+    expect(recovery).toMatch(/Path=\/api\/auth/);
+    expect(recovery).toMatch(/Max-Age=900/);
+    expect(cookie(res, "rr_access")).toBeUndefined();
+  });
+
+  it("explains an expired or used link", async () => {
+    auth.verifyOtp.mockResolvedValue({ data: { session: null }, error: authError("otp_expired", 403) });
+    const res = await post("/verify", { tokenHash: "pkce_abcdef0123456789", type: "signup" });
+    expect(res.status).toBe(401);
+    expect(res.body.error.code).toBe("link_invalid");
+  });
+
+  it("only takes a recent email-link token for older recovery links", async () => {
+    auth.getUser.mockResolvedValue({ data: { user: USER }, error: null });
+    const normal = await post("/recovery", { accessToken: fakeJwt([{ method: "password", timestamp: Math.floor(Date.now() / 1000) }]) });
+    expect(normal.status).toBe(403);
+    const ok = await post("/recovery", { accessToken: fakeJwt([{ method: "recovery", timestamp: Math.floor(Date.now() / 1000) }]) });
+    expect(ok.status).toBe(200);
+    expect(cookie(ok, "rr_recovery")).toBeDefined();
   });
 });
 
@@ -205,51 +321,59 @@ describe("POST /forgot-password", () => {
     expect(res.status).toBe(400);
     expect(res.body.error.fields.email).toBe("Enter your email address.");
   });
+
+  it("allows 5 reset requests per 15 minutes per IP", async () => {
+    auth.resetPasswordForEmail.mockResolvedValue({ data: {}, error: null });
+    const a = app();
+    const send = () => asWebApp(request(a).post("/api/auth/forgot-password"), { access: null }).send({ email: USER.email });
+    for (let i = 0; i < 5; i++) expect((await send()).status).toBe(200);
+    expect((await send()).status).toBe(429);
+  });
 });
 
 describe("POST /reset-password", () => {
   const now = () => Math.floor(Date.now() / 1000);
+  const withRecovery = (token: string) => post("/reset-password", { password: "NewPassw0rd" }, [`rr_recovery=${token}`]);
 
-  it("needs the token from the email link", async () => {
+  it("needs the reset cookie from the email link", async () => {
     const res = await post("/reset-password", { password: "NewPassw0rd" });
     expect(res.status).toBe(401);
   });
 
   it("refuses a normal sign-in token", async () => {
     auth.getUser.mockResolvedValue({ data: { user: USER }, error: null });
-    const token = fakeJwt([{ method: "password", timestamp: now() }]);
-    const res = await post("/reset-password", { password: "NewPassw0rd" }).set("Authorization", `Bearer ${token}`);
+    const res = await withRecovery(fakeJwt([{ method: "password", timestamp: now() }]));
     expect(res.status).toBe(403);
     expect(adminAuth.updateUserById).not.toHaveBeenCalled();
   });
 
   it("refuses an old reset link", async () => {
     auth.getUser.mockResolvedValue({ data: { user: USER }, error: null });
-    const token = fakeJwt([{ method: "otp", timestamp: now() - 2 * 60 * 60 }]);
-    const res = await post("/reset-password", { password: "NewPassw0rd" }).set("Authorization", `Bearer ${token}`);
+    const res = await withRecovery(fakeJwt([{ method: "otp", timestamp: now() - 2 * 60 * 60 }]));
     expect(res.status).toBe(403);
   });
 
-  it("updates the password, signs out other sessions, and signs the user in", async () => {
+  it("updates the password, signs out every session, and signs in with fresh cookies", async () => {
     const token = fakeJwt([{ method: "otp", timestamp: now() }]);
     auth.getUser.mockResolvedValue({ data: { user: USER }, error: null });
     adminAuth.updateUserById.mockResolvedValue({ data: { user: USER }, error: null });
     auth.signInWithPassword.mockResolvedValue({ data: { session: session("refresh-new", "access-new") }, error: null });
 
-    const res = await post("/reset-password", { password: "NewPassw0rd" }).set("Authorization", `Bearer ${token}`);
+    const res = await withRecovery(token);
 
     expect(res.status).toBe(200);
     expect(adminAuth.updateUserById).toHaveBeenCalledWith("user-1", { password: "NewPassw0rd" });
     expect(adminAuth.signOut).toHaveBeenCalledWith(token, "global");
-    expect(res.body.session.accessToken).toBe("access-new");
-    expect(refreshCookie(res)).toMatch(/^rr_refresh=refresh-new/);
+    expect(res.body).toEqual({ status: "password_updated", signedIn: true, user: { displayName: "Maredi" } });
+    expect(setCookies(res).some((c) => c.startsWith("rr_refresh=refresh-new"))).toBe(true);
+    expect(setCookies(res).some((c) => c.startsWith("rr_recovery=") && cleared.test(c))).toBe(true);
+    expectNoSecrets(res);
   });
 
   it("explains when the new password matches the old one", async () => {
     auth.getUser.mockResolvedValue({ data: { user: USER }, error: null });
     adminAuth.updateUserById.mockResolvedValue({ data: null, error: authError("same_password", 422) });
-    const token = fakeJwt([{ method: "otp", timestamp: now() }]);
-    const res = await post("/reset-password", { password: "NewPassw0rd" }).set("Authorization", `Bearer ${token}`);
+    const res = await withRecovery(fakeJwt([{ method: "otp", timestamp: now() }]));
     expect(res.status).toBe(400);
     expect(res.body.error.fields.password).toMatch(/different/);
   });
@@ -257,27 +381,27 @@ describe("POST /reset-password", () => {
 
 describe("GET /me", () => {
   it("requires a signed-in user", async () => {
-    const res = await request(app()).get("/api/auth/me").set("X-RandRoute-Client", "web");
+    const res = await asWebApp(request(app()).get("/api/auth/me"), { access: null });
     expect(res.status).toBe(401);
   });
 
-  it("returns the profile from user_preferences", async () => {
+  it("does not accept a Bearer token instead of the cookie", async () => {
+    auth.getUser.mockResolvedValue({ data: { user: USER }, error: null });
+    const res = await asWebApp(request(app()).get("/api/auth/me"), { access: null }).set("Authorization", "Bearer access-1");
+    expect(res.status).toBe(401);
+    expect(auth.getUser).not.toHaveBeenCalled();
+  });
+
+  it("returns the profile without the user ID or email", async () => {
     auth.getUser.mockResolvedValue({ data: { user: USER }, error: null });
     prefsQuery.maybeSingle.mockResolvedValue({
       data: { display_name: "Maredi Manyama", currency: "ZAR", setup_completed_at: null },
       error: null,
     });
-    const res = await request(app())
-      .get("/api/auth/me")
-      .set("X-RandRoute-Client", "web")
-      .set("Authorization", "Bearer access-1");
+    const res = await asWebApp(request(app()).get("/api/auth/me"), { access: "access-1" });
     expect(res.status).toBe(200);
-    expect(res.body.user).toEqual({
-      id: "user-1",
-      email: USER.email,
-      displayName: "Maredi Manyama",
-      currency: "ZAR",
-      setupCompleted: false,
-    });
+    expect(auth.getUser).toHaveBeenCalledWith("access-1");
+    expect(res.body.user).toEqual({ displayName: "Maredi Manyama", currency: "ZAR", setupCompleted: false });
+    expectNoSecrets(res);
   });
 });
