@@ -181,3 +181,188 @@ export function demoMonthStatement(month: string, openingMinor: number): { spec:
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// Column layouts. Each spec follows the column order the bank publishes on its
+// statements. All values are made up; balances are worked out so the running
+// balance check passes unless a test breaks it on purpose.
+// ---------------------------------------------------------------------------
+
+export type TableColumn = { label: string; x: number; align: "left" | "right" };
+export type TableRow = Record<string, string | string[]>;
+export type TableSpec = {
+  bankLine: string;
+  headerLines: string[];
+  columns: TableColumn[];
+  /** Drawn under Description / Balance before the rows. */
+  openingLine?: { label: string; amount: string };
+  closingLine?: { label: string; amount: string };
+  /** Extra lines after the table, e.g. "Total Debits 1 234.56". */
+  footerLines?: { label: string; amount: string }[];
+  rows: TableRow[];
+};
+
+export async function buildTablePdf(spec: TableSpec): Promise<Uint8Array> {
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const size = 8;
+  const page = doc.addPage([640, 842]);
+  const draw = (text: string, column: TableColumn, y: number, f = font) => {
+    const x = column.align === "right" ? column.x - f.widthOfTextAtSize(text, size) : column.x;
+    page.drawText(text, { x, y, size, font: f });
+  };
+  const col = (label: string) => spec.columns.find((c) => c.label === label)!;
+  const descriptionCol = spec.columns.find((c) => /description|details/i.test(c.label))!;
+  const balanceCol = spec.columns.find((c) => /balance/i.test(c.label))!;
+
+  let y = 800;
+  page.drawText(spec.bankLine, { x: 30, y, size: 14, font: bold });
+  y -= 22;
+  for (const line of spec.headerLines) {
+    page.drawText(line, { x: 30, y, size, font });
+    y -= 13;
+  }
+  y -= 10;
+  for (const column of spec.columns) draw(column.label, column, y, bold);
+  y -= 15;
+  if (spec.openingLine) {
+    draw(spec.openingLine.label, descriptionCol, y);
+    draw(spec.openingLine.amount, balanceCol, y);
+    y -= 13;
+  }
+  for (const row of spec.rows) {
+    let extra: string[] = [];
+    for (const [label, value] of Object.entries(row)) {
+      const [first, ...rest] = Array.isArray(value) ? value : [value];
+      if (first) draw(first, col(label), y);
+      if (rest.length) extra = rest;
+    }
+    y -= 12;
+    for (const line of extra) {
+      draw(line, descriptionCol, y);
+      y -= 12;
+    }
+  }
+  if (spec.closingLine) {
+    y -= 4;
+    draw(spec.closingLine.label, descriptionCol, y);
+    draw(spec.closingLine.amount, balanceCol, y);
+    y -= 13;
+  }
+  for (const line of spec.footerLines ?? []) {
+    y -= 6;
+    page.drawText(line.label, { x: 30, y, size, font });
+    draw(line.amount, balanceCol, y);
+  }
+  return doc.save();
+}
+
+/** Capitec: Money In · Money Out · Fee · Balance — the fee is taken on the same line. */
+export const capitecColumns: TableSpec = {
+  bankLine: "Capitec Bank Limited",
+  headerLines: ["Global One Account", "From Date: 01/10/2026 To Date: 31/10/2026"],
+  columns: [
+    { label: "Date", x: 30, align: "left" },
+    { label: "Description", x: 95, align: "left" },
+    { label: "Money In", x: 390, align: "right" },
+    { label: "Money Out", x: 450, align: "right" },
+    { label: "Fee", x: 500, align: "right" },
+    { label: "Balance", x: 590, align: "right" },
+  ],
+  openingLine: { label: "Opening Balance", amount: "3 000.00" },
+  rows: [
+    { Date: "01/10/2026", Description: "Card Purchase Shoprite Soweto", "Money Out": "-250.00", Balance: "2 750.00" },
+    { Date: "02/10/2026", Description: "Cash Withdrawal Capitec ATM", "Money Out": "-500.00", Fee: "-10.00", Balance: "2 240.00" },
+    { Date: "05/10/2026", Description: "Payment Received Yoco Payout", "Money In": "1 200.00", Balance: "3 440.00" },
+    { Date: "07/10/2026", Description: "Debit Order Clientele Life", "Money Out": "-189.00", Balance: "3 251.00" },
+    { Date: "31/10/2026", Description: "Monthly Account Admin Fee", Fee: "-7.50", Balance: "3 243.50" },
+  ],
+  closingLine: { label: "Closing Balance", amount: "3 243.50" },
+};
+
+/** Absa: Charge · Debit Amount · Credit Amount · Balance, with statement totals. */
+export const absaColumns: TableSpec = {
+  bankLine: "Absa Bank Limited",
+  headerLines: ["Cheque Account Statement", "Statement period: 01/09/2026 - 30/09/2026"],
+  columns: [
+    { label: "Date", x: 30, align: "left" },
+    { label: "Transaction Description", x: 90, align: "left" },
+    { label: "Charge", x: 330, align: "right" },
+    { label: "Debit Amount", x: 420, align: "right" },
+    { label: "Credit Amount", x: 500, align: "right" },
+    { label: "Balance", x: 590, align: "right" },
+  ],
+  openingLine: { label: "Balance Brought Forward", amount: "10 000.00" },
+  rows: [
+    { Date: "1/09/2026", "Transaction Description": ["Acb Debit:External", "Outsurance Insurance"], "Debit Amount": "650.00", Balance: "9 350.00" },
+    { Date: "3/09/2026", "Transaction Description": "Pos Purchase Spar Centurion", Charge: "A", "Debit Amount": "412.30", Balance: "8 937.70" },
+    { Date: "15/09/2026", "Transaction Description": "Digital Payment Cr Salary Example Co", "Credit Amount": "18 500.00", Balance: "27 437.70" },
+    { Date: "20/09/2026", "Transaction Description": "Digital Transfer Own Account Savings", "Debit Amount": "2 000.00", Balance: "25 437.70" },
+  ],
+  closingLine: { label: "Balance Carried Forward", amount: "25 437.70" },
+  footerLines: [
+    { label: "Total Debits", amount: "3 062.30" },
+    { label: "Total Credits", amount: "18 500.00" },
+  ],
+};
+
+/** Standard Bank (classic): Details · Service Fee · Debits · Credits · Date · Balance — the date is NOT first. */
+export const standardBankColumns: TableSpec = {
+  bankLine: "Standard Bank",
+  headerLines: ["The Standard Bank of South Africa Limited", "Statement from 01 August 2026 to 31 August 2026"],
+  columns: [
+    { label: "Details", x: 30, align: "left" },
+    { label: "Service Fee", x: 300, align: "right" },
+    { label: "Debits", x: 380, align: "right" },
+    { label: "Credits", x: 460, align: "right" },
+    { label: "Date", x: 480, align: "left" },
+    { label: "Balance", x: 600, align: "right" },
+  ],
+  openingLine: { label: "Balance Brought Forward", amount: "2 500.00" },
+  rows: [
+    { Details: "Autobank Cash Withdrawal", Debits: "-300.00", Date: "04 Aug", Balance: "2 200.00" },
+    { Details: "IB Payment To Landlord Rent", Debits: "-1 500.00", Date: "05 Aug", Balance: "700.00" },
+    { Details: "Magtape Credit Salary Example", Credits: "9 000.00", Date: "25 Aug", Balance: "9 700.00" },
+  ],
+  closingLine: { label: "Balance Carried Forward", amount: "9 700.00" },
+};
+
+/** Nedbank: Fees · Debits · Credits · Balance with no balances or signs — only the column says which way. */
+export const nedbankColumns: TableSpec = {
+  bankLine: "Nedbank",
+  headerLines: ["Nedbank Limited", "Statement period: 01/07/2026 - 31/07/2026"],
+  columns: [
+    { label: "Date", x: 30, align: "left" },
+    { label: "Description", x: 95, align: "left" },
+    { label: "Fees", x: 360, align: "right" },
+    { label: "Debits", x: 440, align: "right" },
+    { label: "Credits", x: 520, align: "right" },
+    { label: "Balance", x: 600, align: "right" },
+  ],
+  rows: [
+    { Date: "02/07/2026", Description: "POS Purchase Woolworths Food", Debits: "380.00" },
+    { Date: "10/07/2026", Description: "Send-iMali To J Example", Debits: "200.00" },
+    { Date: "25/07/2026", Description: "Salary Example Holdings", Credits: "15 000.00" },
+  ],
+};
+
+/** TymeBank: newest transaction first, Money Out · Money In · Fees · Balance. */
+export const tymeBankColumns: TableSpec = {
+  bankLine: "TymeBank",
+  headerLines: ["EveryDay Account", "Statement period: 01/06/2026 - 30/06/2026"],
+  columns: [
+    { label: "Date", x: 30, align: "left" },
+    { label: "Description", x: 95, align: "left" },
+    { label: "Money Out", x: 390, align: "right" },
+    { label: "Money In", x: 460, align: "right" },
+    { label: "Fees", x: 520, align: "right" },
+    { label: "Balance", x: 600, align: "right" },
+  ],
+  openingLine: { label: "Opening Balance", amount: "1 000.00" },
+  rows: [
+    { Date: "20/06/2026", Description: "Pick n Pay Purchase", "Money Out": "-150.00", Balance: "2 750.00" },
+    { Date: "10/06/2026", Description: "Payment From J Example", "Money In": "2 000.00", Balance: "2 900.00" },
+    { Date: "05/06/2026", Description: "Prepaid Electricity Purchase", "Money Out": "-100.00", Balance: "900.00" },
+  ],
+};

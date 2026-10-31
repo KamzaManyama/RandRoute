@@ -4,6 +4,7 @@
  * Keys match the system categories seeded in supabase/migrations.
  */
 import { normaliseForMatch } from "./clean.js";
+import type { Channel } from "./channel.js";
 
 export type TransactionType = "income" | "expense" | "transfer" | "refund" | "unknown";
 export type Direction = "inflow" | "outflow";
@@ -24,6 +25,7 @@ const RULES: Rule[] = [
   { key: "transfers", type: "transfer", words: ["own acc", "own account", "inter account", "interacc", "transfer to", "transfer from", "trf to", "trf from", "internal transfer", "send money to savings", "move money"] },
   { key: "refunds", type: "refund", direction: "inflow", words: ["refund", "reversal", "reversed", "chargeback", "returned debit order", "rd ret"] },
   { key: "salary", type: "income", direction: "inflow", words: ["salary", "salaries", "payroll", "wages", "sal ", "remuneration", "stipend"] },
+  { key: "other_income", type: "income", direction: "inflow", words: ["sassa", "uif ", "uif payment", "child support grant", "srd grant", "pension", "annuity", "dividend", "sars refund", "tax refund"] },
   { key: "bank_fees", words: ["service fee", "monthly fee", "account fee", "admin fee", "bank charge", "bank charges", "transaction fee", "cash handling", "sms notification", "notification fee", "overdraft interest", "debit interest", "fee "] },
   { key: "cash_withdrawal", words: ["atm", "cash withdrawal", "cash wdl", "withdrawal at", "cashsend", "cash send"] },
   { key: "groceries", words: ["checkers", "shoprite", "pick n pay", "picknpay", "pnp ", "woolworths food", "woolworths", "spar", "food lover", "boxer", "usave", "makro food", "ok foods", "superspar", "kwikspar", "fruit and veg", "fruit veg"] },
@@ -51,8 +53,29 @@ function matches(text: string, phrase: string): boolean {
   return ` ${text} `.includes(` ${p} `) || (p.length >= 6 && text.includes(p));
 }
 
-export function guessCategory(description: string, direction: Direction): CategoryGuess {
+/** Inflows from card-machine and marketplace payouts are often side-hustle income — but the user decides. */
+const SIDE_INCOME_WORDS = ["yoco", "ikhokha", "snapscan", "zapper", "payfast", "paystack", "ozow payout", "takealot seller", "uber driver", "bolt driver", "freelance", "invoice", "airbnb payout", "mr d driver"];
+
+export function guessCategory(description: string, direction: Direction, channel: Channel = "unknown"): CategoryGuess {
   const text = normaliseForMatch(description);
+
+  // A SARS tax refund is income, not money back on something you bought.
+  if (direction === "inflow" && (matches(text, "sars") || matches(text, "tax refund"))) {
+    return { categoryKey: "other_income", transactionType: "income", confidence: 0.8 };
+  }
+
+  // The way money moved is a strong signal for a few categories.
+  if (channel === "internal_transfer") return { categoryKey: "transfers", transactionType: "transfer", confidence: 0.85 };
+  if (channel === "reversal" && direction === "inflow") return { categoryKey: "refunds", transactionType: "refund", confidence: 0.85 };
+  if (channel === "bank_fee" && direction === "outflow") return { categoryKey: "bank_fees", transactionType: "expense", confidence: 0.9 };
+  if (channel === "interest") {
+    return direction === "inflow"
+      ? { categoryKey: "interest", transactionType: "income", confidence: 0.85 }
+      : { categoryKey: "bank_fees", transactionType: "expense", confidence: 0.8 };
+  }
+  if (channel === "atm_withdrawal" && direction === "outflow") {
+    return { categoryKey: "cash_withdrawal", transactionType: "expense", confidence: 0.9 };
+  }
 
   for (const rule of RULES) {
     if (rule.direction && rule.direction !== direction) continue;
@@ -64,7 +87,14 @@ export function guessCategory(description: string, direction: Direction): Catego
     return { categoryKey: rule.key, transactionType: "expense", confidence: 0.85 };
   }
 
+  if (direction === "inflow" && SIDE_INCOME_WORDS.some((w) => matches(text, w))) {
+    // Likely extra income, but below the review threshold so the user confirms it.
+    return { categoryKey: "side_income", transactionType: "income", confidence: 0.55 };
+  }
+
   // Not every credit is income: unknown inflows need the user to decide.
   if (direction === "inflow") return { categoryKey: "other_income", transactionType: "unknown", confidence: 0.4 };
+  // A debit order we can't name is still a fixed commitment the user should label.
+  if (channel === "debit_order") return { categoryKey: "uncategorised", transactionType: "expense", confidence: 0.45 };
   return { categoryKey: "uncategorised", transactionType: "expense", confidence: 0.3 };
 }

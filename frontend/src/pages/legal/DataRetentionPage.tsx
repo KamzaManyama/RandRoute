@@ -8,6 +8,11 @@ const ROWS: { what: string; kept: string; removed: string }[] = [
     removed: 'Discarded as soon as processing ends — whether it succeeds, fails or you cancel.',
   },
   {
+    what: 'A fingerprint of each uploaded PDF (a one-way SHA-256 code)',
+    kept: 'With the statement record, so the same file can’t be imported twice. The PDF can’t be rebuilt from it.',
+    removed: 'Deleted with the statement, all your financial data, or your account.',
+  },
+  {
     what: 'Rows waiting for your review (not yet imported)',
     kept: 'Until you confirm or cancel the import.',
     removed: 'Moved into your transactions when you confirm, or deleted when you cancel. Abandoned imports are cleared after 24 hours.',

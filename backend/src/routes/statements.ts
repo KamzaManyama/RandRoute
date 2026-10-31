@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Router, type Request } from "express";
 import multer from "multer";
 import { rateLimit } from "express-rate-limit";
@@ -7,7 +8,8 @@ import type { SupabaseClients } from "../lib/supabase.js";
 import { HttpError } from "../middleware/errors.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { extractLines, PdfReadError } from "../statements/extractText.js";
-import { parseStatement, StatementParseError, type ParsedRow } from "../statements/parser.js";
+import { BLOCKING_FLAGS, parseStatement, ROW_FLAG_LABELS, StatementParseError, type ParsedRow, type RowFlag } from "../statements/parser.js";
+import { CHANNEL_LABELS, type Channel } from "../statements/channel.js";
 import { guessCategory, REVIEW_THRESHOLD } from "../statements/categorise.js";
 import { descriptionSimilarity } from "../statements/clean.js";
 import { BANK_FORMATS, formatName, isKnownFormat } from "../statements/formats.js";
@@ -94,16 +96,24 @@ async function findDuplicates(db: SupabaseClient, rows: ParsedRow[]) {
   const matches = new Map<number, { id: string; reason: string }>();
   if (rows.length === 0) return matches;
   const dates = rows.map((r) => r.date).sort();
-  const { data, error } = await db
-    .from("transactions")
-    .select("id, transaction_date, amount_minor, direction, cleaned_description")
-    .gte("transaction_date", dates[0]!)
-    .lte("transaction_date", dates.at(-1)!)
-    .limit(5000);
-  if (error) throw dbError("check for duplicates");
+  type Existing = { id: string; transaction_date: string; amount_minor: number; direction: string; cleaned_description: string };
+  const existing: Existing[] = [];
+  // Read every saved transaction in the date range (in pages) so no match is missed.
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await db
+      .from("transactions")
+      .select("id, transaction_date, amount_minor, direction, cleaned_description")
+      .gte("transaction_date", dates[0]!)
+      .lte("transaction_date", dates.at(-1)!)
+      .order("id")
+      .range(from, from + 999);
+    if (error) throw dbError("check for duplicates");
+    existing.push(...((data ?? []) as Existing[]));
+    if (!data || data.length < 1000) break;
+  }
 
-  const byKey = new Map<string, typeof data>();
-  for (const t of data ?? []) {
+  const byKey = new Map<string, Existing[]>();
+  for (const t of existing) {
     const key = `${t.transaction_date}|${t.amount_minor}|${t.direction}`;
     byKey.set(key, [...(byKey.get(key) ?? []), t]);
   }
@@ -170,6 +180,13 @@ function toImportSummary(row: Record<string, any>) {
     createdAt: row.created_at as string,
     warnings: Array.isArray(validation.warnings) ? (validation.warnings as string[]) : [],
     validation: {
+      parser: validation.parser ?? "generic-v1",
+      detectedBank: validation.detected_bank ? formatName(validation.detected_bank) : null,
+      layoutDetected: validation.layout_detected ?? false,
+      newestFirst: validation.newest_first ?? false,
+      rowsSkipped: validation.rows_skipped ?? 0,
+      feeRows: validation.fee_rows ?? 0,
+      columnTotalsCheck: validation.column_totals_check ?? "unavailable",
       balanceCheck: validation.balance_check ?? "unavailable",
       totalsCheck: validation.totals_check ?? "unavailable",
       mismatchedRows: validation.mismatched_rows ?? 0,
@@ -204,7 +221,9 @@ export function statementsRouter(supabase: SupabaseClients): Router {
 
   /** Bank formats the upload screen can offer. */
   router.get("/formats", (_req, res) => {
-    res.json({ formats: BANK_FORMATS.map(({ key, name, status }) => ({ key, name, status })) });
+    res.json({
+      formats: BANK_FORMATS.map(({ key, name, status, support, notes }) => ({ key, name, status, support, notes: notes ?? null })),
+    });
   });
 
   /** All imports for the signed-in user, newest first. */
@@ -249,6 +268,29 @@ export function statementsRouter(supabase: SupabaseClients): Router {
         });
       }
 
+      // One-way fingerprint: spots the same file uploaded twice without keeping the file.
+      const fileSha256 = createHash("sha256").update(file.buffer).digest("hex");
+      const { data: sameFile, error: sameFileError } = await auth.db
+        .from("statement_imports")
+        .select("id, status")
+        .eq("file_sha256", fileSha256)
+        .in("status", ["staged", "needs_review", "imported", "partial"])
+        .limit(1);
+      if (sameFileError) throw dbError("check for an earlier upload");
+      if (sameFile?.length) {
+        file.buffer.fill(0);
+        const earlier = sameFile[0]!;
+        const reviewing = earlier.status === "staged" || earlier.status === "needs_review";
+        throw new HttpError(
+          409,
+          "duplicate_statement",
+          reviewing
+            ? "You've already uploaded this exact file and it's waiting for your review."
+            : "You've already imported this exact statement. Delete the earlier import first if you want to import it again.",
+          { existingImportId: earlier.id as string },
+        );
+      }
+
       let result;
       try {
         const lines = await extractLines(new Uint8Array(bytes)); // copy: pdf.js takes ownership
@@ -271,10 +313,27 @@ export function statementsRouter(supabase: SupabaseClients): Router {
       const duplicates = await findDuplicates(auth.db, result.rows);
       const sourceId = await findOrCreateSource(auth.db, auth.userId, result.bankKey, fields.nickname);
 
+      // Overlapping a statement already saved for the same bank? Say so plainly.
+      const { data: overlapping } = await auth.db
+        .from("statement_imports")
+        .select("period_start, period_end")
+        .eq("bank_format_key", result.bankKey)
+        .in("status", ["imported", "partial"])
+        .lte("period_start", result.period.end)
+        .gte("period_end", result.period.start)
+        .limit(5);
+      if (overlapping?.length) {
+        result.validation.warnings.push(
+          `This statement overlaps ${overlapping.length} ${formatName(result.bankKey)} statement(s) you've already imported. Rows that match saved transactions are marked as possible duplicates.`,
+        );
+        result.validation.has_warnings = true;
+      }
+
       const staged = result.rows.map((row) => {
-        const guess = guessCategory(row.description, row.direction);
+        const guess = guessCategory(row.description, row.direction, row.channel);
         const duplicate = duplicates.get(row.rowIndex);
-        const uncertain = row.extractionConfidence < 0.75 || guess.confidence < REVIEW_THRESHOLD || Boolean(duplicate);
+        const blocking = row.flags.some((f) => BLOCKING_FLAGS.has(f));
+        const uncertain = blocking || row.extractionConfidence < 0.75 || guess.confidence < REVIEW_THRESHOLD || Boolean(duplicate);
         return {
           user_id: auth.userId,
           row_index: row.rowIndex,
@@ -290,6 +349,8 @@ export function statementsRouter(supabase: SupabaseClients): Router {
           include: true,
           duplicate_of_transaction_id: duplicate?.id ?? null,
           duplicate_decision: duplicate ? "unresolved" : null,
+          channel: row.channel,
+          flags: row.flags,
         };
       });
       const needsReview = staged.some((r) => r.review_status === "needs_review");
@@ -304,6 +365,7 @@ export function statementsRouter(supabase: SupabaseClients): Router {
           period_end: result.period.end,
           status: needsReview ? "needs_review" : "staged",
           validation_summary: result.validation,
+          file_sha256: fileSha256,
         })
         .select("id")
         .single();
@@ -322,6 +384,8 @@ export function statementsRouter(supabase: SupabaseClients): Router {
       res.status(201).json({
         importId: created.id,
         rowCount: staged.length,
+        bankName: formatName(result.bankKey),
+        period: result.period,
         needsReview: staged.filter((r) => r.review_status === "needs_review").length,
         duplicates: duplicates.size,
         warnings: result.validation.warnings,
@@ -346,7 +410,7 @@ export function statementsRouter(supabase: SupabaseClients): Router {
       const { data, error: rowsError } = await db
         .from("staged_transactions")
         .select(
-          "id, row_index, transaction_date, cleaned_description, amount_minor, direction, category_id, transaction_type, review_status, extraction_confidence, category_confidence, include, duplicate_decision, duplicate:transactions!staged_transactions_duplicate_of_transaction_id_user_id_fkey(id, transaction_date, cleaned_description, amount_minor, direction, import_id)",
+          "id, row_index, transaction_date, cleaned_description, amount_minor, direction, category_id, transaction_type, review_status, extraction_confidence, category_confidence, include, duplicate_decision, channel, flags, duplicate:transactions!staged_transactions_duplicate_of_transaction_id_user_id_fkey(id, transaction_date, cleaned_description, amount_minor, direction, import_id)",
         )
         .eq("import_id", id.data)
         .order("row_index");
@@ -364,6 +428,13 @@ export function statementsRouter(supabase: SupabaseClients): Router {
         extractionConfidence: r.extraction_confidence === null ? null : Number(r.extraction_confidence),
         categoryConfidence: r.category_confidence === null ? null : Number(r.category_confidence),
         include: r.include,
+        channel: (r.channel ?? "unknown") as Channel,
+        channelLabel: CHANNEL_LABELS[(r.channel ?? "unknown") as Channel] ?? "Other",
+        flags: ((r.flags ?? []) as RowFlag[]).map((code) => ({
+          code,
+          label: ROW_FLAG_LABELS[code] ?? code,
+          blocking: BLOCKING_FLAGS.has(code),
+        })),
         duplicateDecision: r.duplicate_decision,
         duplicateOf: r.duplicate
           ? {
@@ -379,7 +450,7 @@ export function statementsRouter(supabase: SupabaseClients): Router {
     } else {
       const { data, error: txError } = await db
         .from("transactions")
-        .select("id, transaction_date, cleaned_description, amount_minor, direction, category_id, transaction_type, review_status")
+        .select("id, transaction_date, cleaned_description, amount_minor, direction, category_id, transaction_type, review_status, channel")
         .eq("import_id", id.data)
         .order("transaction_date")
         .limit(5000);
@@ -393,6 +464,8 @@ export function statementsRouter(supabase: SupabaseClients): Router {
         categoryId: r.category_id,
         transactionType: r.transaction_type,
         reviewStatus: r.review_status,
+        channel: (r.channel ?? "unknown") as Channel,
+        channelLabel: CHANNEL_LABELS[(r.channel ?? "unknown") as Channel] ?? "Other",
       }));
     }
 
@@ -496,24 +569,40 @@ export function statementsRouter(supabase: SupabaseClients): Router {
     res.status(204).end();
   });
 
-  /** Mark every remaining "needs review" row as checked. */
+  /**
+   * Mark remaining "needs review" rows as checked, except possible duplicates
+   * and rows that don't match the running balance: those need a look one by one.
+   */
   router.post("/:id/accept-all", async (req, res) => {
-    const { error } = await req.auth!.db
+    const { data, error } = await req.auth!.db
       .from("staged_transactions")
       .update({ review_status: "user_confirmed" })
       .eq("import_id", req.params.id)
       .eq("review_status", "needs_review")
-      .is("duplicate_decision", null);
+      .is("duplicate_decision", null)
+      .not("flags", "cs", "{balance_mismatch}")
+      .select("id");
     if (error) throw dbError("update the rows");
-    res.status(204).end();
+    res.json({ accepted: data?.length ?? 0 });
   });
 
   /** Save the reviewed rows as transactions — all at once, or nothing. */
   router.post("/:id/confirm", async (req, res) => {
-    const { data, error } = await req.auth!.db.rpc("confirm_import", { p_import_id: req.params.id });
+    const { acknowledgeWarnings } = parseBody(z.object({ acknowledgeWarnings: z.boolean().default(false) }), req.body);
+    const { data, error } = await req.auth!.db.rpc("confirm_import", {
+      p_import_id: req.params.id,
+      p_acknowledge_warnings: acknowledgeWarnings,
+    });
     if (error) {
       if (error.code === "P0002") throw new HttpError(404, "not_found", "Statement not found.");
-      if (error.code === "P0001") throw new HttpError(409, "cannot_confirm", error.message);
+      const conflicts: Record<string, string> = {
+        P0001: "cannot_confirm",
+        RRDUP: "duplicates_unresolved",
+        RRREV: "rows_need_review",
+        RRACK: "warnings_not_acknowledged",
+        RRNON: "nothing_to_import",
+      };
+      if (error.code && conflicts[error.code]) throw new HttpError(409, conflicts[error.code]!, error.message);
       throw dbError("import this statement");
     }
     res.json({ saved: data as number });

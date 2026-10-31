@@ -21,7 +21,7 @@ export async function fetchTransactions(
     let query = db
       .from("transactions")
       .select(
-        "id, transaction_date, cleaned_description, amount_minor, direction, transaction_type, excluded_from_totals, category_id, created_at, categories(name)",
+        "id, transaction_date, cleaned_description, amount_minor, direction, transaction_type, excluded_from_totals, category_id, channel, created_at, categories(name, key)",
       )
       .gte("transaction_date", range.start)
       .lt("transaction_date", range.end)

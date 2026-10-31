@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { AppLayout } from './components/AppLayout'
 import { PublicOnly, RequireAuth } from './auth/RouteGuards'
 import { HomePage } from './pages/HomePage'
@@ -18,7 +18,7 @@ import { InsightsPage } from './pages/InsightsPage'
 import { ProfilePage } from './pages/ProfilePage'
 import { BudgetPlanPage } from './pages/BudgetPlanPage'
 import { SetupPage } from './pages/SetupPage'
-import { ExplainPage } from './pages/ExplainPage'
+import { CoachPage } from './pages/CoachPage'
 import { PrivacyPage } from './pages/legal/PrivacyPage'
 import { DataRetentionPage } from './pages/legal/DataRetentionPage'
 import { CookiesPage } from './pages/legal/CookiesPage'
@@ -56,7 +56,9 @@ export default function App() {
           <Route path="budget" element={<BudgetPage />} />
           <Route path="budget/plan" element={<BudgetPlanPage />} />
           <Route path="insights" element={<InsightsPage />} />
-          <Route path="insights/explain" element={<ExplainPage />} />
+          <Route path="coach" element={<CoachPage />} />
+          {/* Old address for the AI explanation; keeps ?month= */}
+          <Route path="insights/explain" element={<ToCoach />} />
           <Route path="profile" element={<ProfilePage />} />
         </Route>
       </Route>
@@ -65,4 +67,9 @@ export default function App() {
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
   )
+}
+
+function ToCoach() {
+  const { search } = useLocation()
+  return <Navigate to={`/coach${search}`} replace />
 }

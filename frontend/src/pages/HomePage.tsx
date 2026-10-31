@@ -3,14 +3,14 @@ import { Link, useLocation } from 'react-router-dom'
 import { ApiError, type DashboardSummary } from '../lib/api'
 import { useApi } from '../lib/useApi'
 import { useAuth } from '../auth/useAuth'
-import { currentMonth, formatDate, money, monthLabel, signedMoney } from '../lib/format'
+import { currentMonth, formatDate, money, monthLabel, savingsRateLabel, signedMoney } from '../lib/format'
 import { MonthPicker, PageHeader, Stat, Stats } from '../components/ui'
 import { FormAlert } from '../components/forms'
-import { BellIcon } from '../components/icons'
+import { HealthCard } from '../components/health'
 
 type Load = { month: string; summary: DashboardSummary | null; error: string | null }
 
-/** Screen 04 — Home dashboard */
+/** Home dashboard: one month's figures, all calculated by the backend from saved transactions. */
 export function HomePage() {
   const api = useApi()
   const { user } = useAuth()
@@ -40,20 +40,14 @@ export function HomePage() {
   const error = loading ? null : loaded.error
   const coverage = summary?.coverage
   const spendingLink = (extra = '') => `/spending?month=${month}${extra}`
+  const hasData = Boolean(coverage?.hasImports)
 
   return (
     <div className="page">
       <PageHeader
         eyebrow="Welcome back"
         title={firstName || 'to RandRoute'}
-        actions={
-          <>
-            <MonthPicker month={month} onChange={setMonth} max={currentMonth()} />
-            <button type="button" className="icon-button" aria-label="Notifications">
-              <BellIcon />
-            </button>
-          </>
-        }
+        actions={<MonthPicker month={month} onChange={setMonth} max={currentMonth()} />}
       />
 
       {notice && <FormAlert tone="success">{notice}</FormAlert>}
@@ -61,8 +55,8 @@ export function HomePage() {
       {coverage && !coverage.hasImports && (
         <section className="card card--dark hero">
           <div>
-            <h2>Import your first statement</h2>
-            <p>See where your money goes — no bank login needed.</p>
+            <h2>Import your {monthLabel(month)} statement</h2>
+            <p>Upload a PDF from FNB, Capitec, Absa, Standard Bank, Nedbank or TymeBank. You check every row before anything is saved.</p>
           </div>
           <Link to="/statements/upload" className="button button--ghost">
             Upload a statement
@@ -72,12 +66,16 @@ export function HomePage() {
 
       {coverage?.hasImports && !coverage.coversWholeMonth && (
         <p className="preview-banner">
-          Partial month: your imported statements don&apos;t cover all of {monthLabel(month)}, so these totals may be
-          incomplete.
+          Partial month: your imported statements don&apos;t cover all of {monthLabel(month)}, so these totals may be incomplete.
         </p>
       )}
       {coverage?.hasWarnings && (
-        <p className="preview-banner">Some statements for this month imported with warnings. Check them in Statements.</p>
+        <p className="preview-banner">
+          Some statements for this month imported with warnings.{' '}
+          <Link to="/statements" className="text-link">
+            Check them
+          </Link>
+        </p>
       )}
       {error && <FormAlert>{error}</FormAlert>}
 
@@ -90,15 +88,104 @@ export function HomePage() {
           tone={summary && summary.netCashFlow < 0 ? 'negative' : undefined}
         />
         <Stat
+          label="Savings rate"
+          value={summary ? savingsRateLabel(summary.savingsRate.percent) : '…'}
+          tone={summary && (summary.savingsRate.percent ?? 0) < 0 ? 'negative' : undefined}
+        />
+        <Stat
           label="Budget remaining"
-          value={summary ? (summary.budgetRemaining == null ? 'No budget yet' : money(summary.budgetRemaining)) : '…'}
+          value={summary ? (summary.budgetRemaining == null ? 'No target set' : money(summary.budgetRemaining)) : '…'}
+          tone={summary && (summary.budgetRemaining ?? 0) < 0 ? 'negative' : undefined}
         />
       </Stats>
       <p className="muted small">
-        Based on your imported statements — not a live bank balance.
-        {summary && summary.unclassifiedIn > 0 &&
-          ` ${money(summary.unclassifiedIn)} came in but isn't marked as income yet, so it's not counted.`}
+        Calculated from your imported statements — not a live bank balance. Transfers between your own accounts aren&apos;t
+        counted as income or spending.
+        {summary && summary.unclassifiedIn > 0 && (
+          <>
+            {' '}
+            {money(summary.unclassifiedIn)} came in but isn&apos;t marked as income yet, so it&apos;s not counted.{' '}
+            <Link to={spendingLink('&type=unknown')} className="text-link">
+              Mark it
+            </Link>
+          </>
+        )}
       </p>
+
+      <nav className="quick-actions" aria-label="Quick actions">
+        <Link to="/statements/upload" className="quick-action">
+          <span className="quick-action__title">Upload statement</span>
+          <span className="quick-action__meta">PDF, checked before saving</span>
+        </Link>
+        <Link to={`/budget?month=${month}`} className="quick-action">
+          <span className="quick-action__title">Budget</span>
+          <span className="quick-action__meta">
+            {summary?.budget.hasBudget
+              ? summary.budget.overCount > 0
+                ? `${summary.budget.overCount} over limit`
+                : 'All within limits'
+              : 'Set your limits'}
+          </span>
+        </Link>
+        <Link to={`/coach?month=${month}`} className="quick-action">
+          <span className="quick-action__title">AI coach</span>
+          <span className="quick-action__meta">Explain my month</span>
+        </Link>
+        <Link to={spendingLink()} className="quick-action">
+          <span className="quick-action__title">Spending</span>
+          <span className="quick-action__meta">By category</span>
+        </Link>
+      </nav>
+
+      {hasData && summary && (
+        <div className="columns">
+          <HealthCard health={summary.health} />
+
+          <section className="card stack" aria-labelledby="income-title">
+            <h2 id="income-title" className="section-title">
+              Where money came from
+            </h2>
+            <ul className="list">
+              <li className="list-row">
+                <span className="list-row__main">
+                  <span className="list-row__title">Salary &amp; wages</span>
+                </span>
+                <span className="list-row__value positive">{money(summary.income.salary)}</span>
+              </li>
+              <li className="list-row">
+                <span className="list-row__main">
+                  <span className="list-row__title">Side hustle &amp; extra income</span>
+                  <span className="list-row__meta">Payouts, freelance and other work you marked</span>
+                </span>
+                <span className="list-row__value positive">{money(summary.income.side)}</span>
+              </li>
+              <li className="list-row">
+                <span className="list-row__main">
+                  <span className="list-row__title">Other income</span>
+                  <span className="list-row__meta">Grants, interest, refunds from SARS</span>
+                </span>
+                <span className="list-row__value positive">{money(summary.income.other)}</span>
+              </li>
+            </ul>
+            <div className="divider" />
+            <div className="list-row">
+              <span className="list-row__main">
+                <span className="list-row__title">Debit orders</span>
+                <span className="list-row__meta">
+                  {summary.debitOrders.count} fixed commitment{summary.debitOrders.count === 1 ? '' : 's'} this month
+                </span>
+              </span>
+              <span className="list-row__value">{money(summary.debitOrders.total)}</span>
+            </div>
+            {summary.goals.savingsTargetMinor !== null && summary.savingsRate.percent !== null && (
+              <p className={summary.goals.savingsTargetMet ? 'small positive' : 'small'}>
+                Savings goal {money(summary.goals.savingsTargetMinor)}:{' '}
+                {summary.goals.savingsTargetMet ? 'met this month' : `not met — ${money(Math.max(summary.netCashFlow, 0))} left after spending`}
+              </p>
+            )}
+          </section>
+        </div>
+      )}
 
       <div className="columns">
         <section className="card">
@@ -117,6 +204,7 @@ export function HomePage() {
                       <span className="list-row__title">{c.name}</span>
                       <span className="list-row__meta">
                         {c.count} transaction{c.count === 1 ? '' : 's'}
+                        {c.sharePercent !== null && ` · ${c.sharePercent}% of spending`}
                       </span>
                     </span>
                     <span className="list-row__value">{money(c.total)}</span>
@@ -144,7 +232,7 @@ export function HomePage() {
                     <span className="list-row__main">
                       <span className="list-row__title">{t.description}</span>
                       <span className="list-row__meta">
-                        {formatDate(t.date)} · {t.categoryName ?? 'Uncategorised'}
+                        {formatDate(t.date)} · {t.categoryName ?? 'Uncategorised'} · {t.channelLabel}
                       </span>
                     </span>
                     <span className={`list-row__value ${t.direction === 'inflow' ? 'positive' : ''}`}>

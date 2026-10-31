@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { fakeBackend, signedInRoutes, testProfile } from '../test/fakeBackend'
+import { apiError, fakeBackend, signedInRoutes, testProfile } from '../test/fakeBackend'
 import { renderApp } from '../test/renderApp'
 import type { BudgetView, Insights } from '../lib/useApi'
 
@@ -31,9 +31,30 @@ const budgetView = (over: Partial<BudgetView> = {}): BudgetView => ({
 const insights: Insights = {
   month: '2026-09',
   coverage,
-  totals: { moneyInMinor: 2500000, moneyOutMinor: 900000, netMinor: 1600000, refundsMinor: 0, unclassifiedInMinor: 0, previousMoneyOutMinor: 800000, moneyOutChangePercent: 13 },
+  totals: {
+    moneyInMinor: 2500000,
+    moneyOutMinor: 900000,
+    netMinor: 1600000,
+    refundsMinor: 0,
+    unclassifiedInMinor: 0,
+    previousMoneyOutMinor: 800000,
+    moneyOutChangePercent: 13,
+    income: { salary: 2500000, side: 0, other: 0 },
+    debitOrders: { total: 120000, count: 3 },
+    transfersMinor: 0,
+  },
+  savingsRate: { basisPoints: 6400, percent: 64 },
+  health: {
+    level: 'watch',
+    provisional: false,
+    reasons: [
+      { code: 'good_savings', tone: 'good', text: '64% of your income was left after spending.' },
+      { code: 'over_budget', tone: 'warning', text: '1 budget category is over the limit.' },
+    ],
+  },
+  goals: { expectedIncomeMinor: null, savingsTargetMinor: null, monthlySpendingTargetMinor: null, savingsTargetMet: null },
   comparison: { month: '2026-08', available: true, reason: null },
-  topCategories: [{ categoryId: 'cat-g', name: 'Groceries', totalMinor: 350000, count: 6 }],
+  topCategories: [{ categoryId: 'cat-g', name: 'Groceries', totalMinor: 350000, count: 6, sharePercent: 39 }],
   changes: [{ categoryId: 'cat-g', name: 'Groceries', totalMinor: 350000, previousMinor: 250000, changeMinor: 100000, changePercent: 40 }],
   unusual: [],
   unusualCheck: { available: false, historyMonths: 1, reason: 'We need at least 3 complete earlier months to spot unusual spending (you have 1).' },
@@ -57,7 +78,12 @@ describe('Initial setup', () => {
     await userEvent.type(screen.getByLabelText(/how much would you like to save/i), '2000')
     await userEvent.click(screen.getByRole('button', { name: 'Continue' }))
     expect(await screen.findByRole('heading', { level: 1, name: 'Maredi' })).toBeInTheDocument()
-    expect(calls.find((c) => c.method === 'PATCH')!.body).toEqual({ setupCompleted: true, monthlyBudgetTargetMinor: null, savingsTargetMinor: 200000 })
+    expect(calls.find((c) => c.method === 'PATCH')!.body).toEqual({
+      setupCompleted: true,
+      expectedMonthlyIncomeMinor: null,
+      monthlyBudgetTargetMinor: null,
+      savingsTargetMinor: 200000,
+    })
   })
 })
 
@@ -108,35 +134,51 @@ describe('Budget', () => {
   })
 })
 
-describe('Insights and AI', () => {
-  it('shows calculated insights without calling AI', async () => {
+const coachInput = {
+  month: '2026-09',
+  currency: 'ZAR',
+  coverage: 'whole_month',
+  income: 'R25 000.00',
+  spending: 'R9 000.00',
+  net: 'R16 000.00',
+  savingsRatePercent: 64,
+  risk: { level: 'watch', provisional: false, reasons: ['1 budget category is over the limit.'] },
+}
+
+const coachResult = {
+  coach: {
+    summary: 'R25 000.00 came in and R9 000.00 went out, so 64% of your income was left.',
+    positives: ['You kept most of your income.', 'Transport stayed within budget.', 'No unusual spending.'],
+    concerns: ['Groceries went over budget.', 'Groceries rose the most.', 'Three debit orders run every month.'],
+    actions: ['Plan meals before shopping.', 'Set a grocery limit you can keep.', 'Review your debit orders.'],
+    motivation: 'Small changes add up.',
+  },
+  verification: { numbersChecked: 3, pointsRemoved: 0, attempts: 1 },
+  basedOn: coachInput,
+  generatedAt: '2026-10-24T10:00:00Z',
+  source: 'ai_generated',
+}
+
+describe('Insights and AI coach', () => {
+  it('shows calculated insights, savings rate and money health without calling AI', async () => {
     const { calls } = fakeBackend({ ...signedInRoutes, 'GET /api/insights': () => ({ insights, ai: { available: true } }) })
     renderApp('/insights?month=2026-09')
     expect(await screen.findByText('+13% vs August 2026')).toBeInTheDocument()
     expect(screen.getByText(/need at least 3 complete earlier months/)).toBeInTheDocument()
-    expect(calls.some((c) => c.path.includes('explain'))).toBe(false)
+    expect(screen.getByText('64%')).toBeInTheDocument()
+    expect(screen.getByText('Worth watching')).toBeInTheDocument()
+    expect(screen.getByText('1 budget category is over the limit.')).toBeInTheDocument()
+    expect(calls.some((c) => c.path.includes('coach'))).toBe(false)
   })
 
-  it('opens the Explain page from Insights', async () => {
+  it('opens the AI coach from Insights', async () => {
     fakeBackend({ ...signedInRoutes, 'GET /api/insights': () => ({ insights, ai: { available: true } }) })
     renderApp('/insights?month=2026-09')
-    expect(await screen.findByRole('link', { name: 'Explain my spending' })).toHaveAttribute('href', '/insights/explain?month=2026-09')
+    expect(await screen.findByRole('link', { name: 'Ask the AI coach' })).toHaveAttribute('href', '/coach?month=2026-09')
   })
 
-  it('asks for consent, then streams the steps, the AI thinking and the answer', async () => {
+  it('shows what will be shared, asks for consent, then shows the checked, labelled answer', async () => {
     let profile = { ...testProfile }
-    const sse = [
-      ['step', { id: 'figures', label: 'Calculated your totals, changes and saving opportunities', state: 'done' }],
-      ['step', { id: 'ai', label: 'AI is thinking it through', state: 'active' }],
-      ['thought', { text: '**Looking at groceries**\nGroceries went over budget.' }],
-      ['step', { id: 'ai', label: 'AI finished thinking', state: 'done' }],
-      ['text', { text: 'Where your money went\n- Groceries rose the most.\n' }],
-      ['text', { text: 'How you could save\n- Plan meals to save R225.00 a month.' }],
-      ['step', { id: 'write', label: 'Explanation ready', state: 'done' }],
-      ['done', { generatedAt: '2026-10-24T10:00:00Z' }],
-    ]
-      .map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
-      .join('')
     const { calls } = fakeBackend({
       ...signedInRoutes,
       'GET /api/profile': () => ({ profile }),
@@ -144,22 +186,47 @@ describe('Insights and AI', () => {
         profile = { ...profile, ai: { ...profile.ai, consent: 'granted' } }
         return { profile }
       },
-      'POST /api/insights/explain/stream': () => new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } }),
+      'GET /api/coach/preview': () => ({ input: coachInput, ai: { available: true } }),
+      'POST /api/coach': () => coachResult,
     })
-    renderApp('/insights/explain?month=2026-09')
-    await userEvent.click(await screen.findByRole('button', { name: 'Explain my spending' }))
-    expect(screen.getByRole('heading', { name: 'Use AI explanations?' })).toBeInTheDocument()
-    expect(calls.some((c) => c.path === '/api/insights/explain/stream')).toBe(false)
+    renderApp('/coach?month=2026-09')
+    expect(await screen.findByText('Exactly what is shared with the AI')).toBeInTheDocument()
+    expect(screen.getAllByText('R25 000.00').length).toBeGreaterThan(0)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Coach me on September 2026' }))
+    expect(screen.getByRole('heading', { name: 'Use the AI coach?' })).toBeInTheDocument()
+    expect(calls.some((c) => c.method === 'POST' && c.path === '/api/coach')).toBe(false)
 
     await userEvent.click(screen.getByRole('button', { name: /I agree/ }))
-    expect(await screen.findByText('Plan meals to save R225.00 a month.')).toBeInTheDocument()
-    expect(screen.getByText('AI finished thinking')).toBeInTheDocument()
-    expect(screen.getByText('AI thinking')).toBeInTheDocument()
-    expect(screen.getByText('Looking at groceries')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { level: 3, name: 'How you could save' })).toBeInTheDocument()
+    expect(await screen.findByText(coachResult.coach.summary)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'What went well' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'What to watch' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Next steps' })).toBeInTheDocument()
+    expect(screen.getByText('Plan meals before shopping.')).toBeInTheDocument()
+    expect(screen.getByText('Small changes add up.')).toBeInTheDocument()
     expect(screen.getByText('Written by AI')).toBeInTheDocument()
-    expect(screen.queryByText('What was shared with the AI')).not.toBeInTheDocument()
-    expect(calls.find((c) => c.path === '/api/insights/explain/stream')!.body).toEqual({ month: '2026-09' })
+    expect(screen.getByText(/Checked 3 figures against your calculated totals/)).toBeInTheDocument()
+    expect(calls.find((c) => c.method === 'POST' && c.path === '/api/coach')!.body).toEqual({ month: '2026-09' })
+  })
+
+  it('says so when the AI answer could not be verified', async () => {
+    fakeBackend({
+      ...signedInRoutes,
+      'GET /api/profile': () => ({ profile: { ...testProfile, ai: { ...testProfile.ai, consent: 'granted' } } }),
+      'GET /api/coach/preview': () => ({ input: coachInput, ai: { available: true } }),
+      'POST /api/coach': () =>
+        apiError(502, 'ai_unverified', "The AI answer couldn't be checked against your figures, so we didn't show it."),
+    })
+    renderApp('/coach?month=2026-09')
+    await userEvent.click(await screen.findByRole('button', { name: 'Coach me on September 2026' }))
+    expect(await screen.findByText(/couldn't be checked against your figures/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()
+  })
+
+  it('redirects the old explain address to the coach', async () => {
+    fakeBackend({ ...signedInRoutes, 'GET /api/coach/preview': () => ({ input: coachInput, ai: { available: true } }) })
+    renderApp('/insights/explain?month=2026-09')
+    expect(await screen.findByRole('heading', { name: 'Your September 2026, explained' })).toBeInTheDocument()
   })
 
   it('explains when AI is switched off', async () => {
@@ -169,10 +236,9 @@ describe('Insights and AI', () => {
       'GET /api/insights': () => ({ insights, ai: { available: false } }),
     })
     renderApp('/insights?month=2026-09')
-    expect(await screen.findByText(/AI answers are turned off right now/)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Explain my spending' })).not.toBeInTheDocument()
+    expect(await screen.findByText(/AI coaching is turned off right now/)).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Ask the AI coach' })).not.toBeInTheDocument()
   })
-
 })
 
 describe('Profile & privacy', () => {

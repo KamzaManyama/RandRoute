@@ -71,8 +71,6 @@ const envSchema = z.object({
   GEMINI_MODEL: z.string().min(1).default("gemini-3.1-flash-lite"),
   // Tried automatically if the main model is busy, times out or is retired. Empty = no backup.
   GEMINI_FALLBACK_MODEL: z.string().default("gemini-3.5-flash"),
-  // Used for "Explain my spending", which streams the model's thinking. Must support thought summaries.
-  GEMINI_THINKING_MODEL: z.string().default("gemini-3.5-flash"),
   VERCEL_URL: z.string().optional(),
 });
 
@@ -98,7 +96,6 @@ export type AppConfig = {
     geminiApiKey?: string;
     geminiModel: string;
     geminiFallbackModel?: string;
-    geminiThinkingModel?: string;
   };
 };
 
@@ -146,7 +143,6 @@ export function loadConfig(rawEnv: NodeJS.ProcessEnv = process.env): AppConfig {
       geminiApiKey: e.GEMINI_API_KEY,
       geminiModel: e.GEMINI_MODEL,
       geminiFallbackModel: e.GEMINI_FALLBACK_MODEL && e.GEMINI_FALLBACK_MODEL !== e.GEMINI_MODEL ? e.GEMINI_FALLBACK_MODEL : undefined,
-      geminiThinkingModel: e.GEMINI_THINKING_MODEL || undefined,
     },
   };
 }

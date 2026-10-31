@@ -9,7 +9,7 @@ import { formatName } from "../statements/formats.js";
 import { REFRESH_COOKIE } from "./auth.js";
 
 /** Bump when the AI explanation text in the app changes, so consent is asked again. */
-export const AI_POLICY_VERSION = "2026-10";
+export const AI_POLICY_VERSION = "2026-11";
 
 const minor = z.number().int().min(0, "Can't be negative.").max(100_000_000_000, "That amount is too large.");
 
@@ -18,6 +18,7 @@ const patchSchema = z
     displayName: z.string().trim().max(60, "Use 60 characters or fewer.").nullable().optional(),
     monthlyBudgetTargetMinor: minor.nullable().optional(),
     savingsTargetMinor: minor.nullable().optional(),
+    expectedMonthlyIncomeMinor: minor.nullable().optional(),
     setupCompleted: z.literal(true).optional(),
   })
   .refine((v) => Object.keys(v).length > 0, { message: "Nothing to update." });
@@ -62,7 +63,7 @@ export function profileRouter({ config, supabase }: { config: AppConfig; supabas
     const { data, error } = await req.auth!.db
       .from("user_preferences")
       .select(
-        "display_name, currency, monthly_budget_target_minor, savings_target_minor, setup_completed_at, ai_consent_status, ai_consent_updated_at, ai_consent_policy_version",
+        "display_name, currency, monthly_budget_target_minor, savings_target_minor, expected_monthly_income_minor, setup_completed_at, ai_consent_status, ai_consent_updated_at, ai_consent_policy_version",
       )
       .maybeSingle();
     if (error) throw dbError("load your profile");
@@ -73,6 +74,8 @@ export function profileRouter({ config, supabase }: { config: AppConfig; supabas
       currency: (data?.currency as string | undefined) ?? "ZAR",
       monthlyBudgetTargetMinor: data?.monthly_budget_target_minor === null || data?.monthly_budget_target_minor === undefined ? null : Number(data.monthly_budget_target_minor),
       savingsTargetMinor: data?.savings_target_minor === null || data?.savings_target_minor === undefined ? null : Number(data.savings_target_minor),
+      expectedMonthlyIncomeMinor:
+        data?.expected_monthly_income_minor === null || data?.expected_monthly_income_minor === undefined ? null : Number(data.expected_monthly_income_minor),
       setupCompleted: Boolean(data?.setup_completed_at),
       ai: {
         available: config.ai.enabled,
@@ -94,6 +97,7 @@ export function profileRouter({ config, supabase }: { config: AppConfig; supabas
     if (body.displayName !== undefined) update.display_name = body.displayName || null;
     if (body.monthlyBudgetTargetMinor !== undefined) update.monthly_budget_target_minor = body.monthlyBudgetTargetMinor;
     if (body.savingsTargetMinor !== undefined) update.savings_target_minor = body.savingsTargetMinor;
+    if (body.expectedMonthlyIncomeMinor !== undefined) update.expected_monthly_income_minor = body.expectedMonthlyIncomeMinor;
     if (body.setupCompleted) update.setup_completed_at = new Date().toISOString();
 
     const { error } = await req.auth!.db.from("user_preferences").update(update).eq("user_id", req.auth!.userId);
@@ -133,7 +137,7 @@ export function profileRouter({ config, supabase }: { config: AppConfig; supabas
       const { data, error } = await db
         .from("transactions")
         .select(
-          "transaction_date, cleaned_description, amount_minor, direction, transaction_type, excluded_from_totals, note, categories(name), statement_sources(bank_format_key, nickname)",
+          "transaction_date, cleaned_description, amount_minor, direction, transaction_type, channel, excluded_from_totals, note, categories(name), statement_sources(bank_format_key, nickname)",
         )
         .order("transaction_date")
         .range(from, from + 999);
@@ -145,7 +149,7 @@ export function profileRouter({ config, supabase }: { config: AppConfig; supabas
     const today = new Date().toISOString().slice(0, 10);
 
     if (format === "csv") {
-      const header = ["Date", "Description", "Amount (R)", "Direction", "Type", "Category", "Account", "Counted in totals", "Note"];
+      const header = ["Date", "Description", "Amount (R)", "Direction", "Type", "Channel", "Category", "Account", "Counted in totals", "Note"];
       const lines = transactions.map((t) => {
         const source = one(t.statement_sources as { bank_format_key: string; nickname: string | null } | null);
         const signed = t.direction === "outflow" ? -Number(t.amount_minor) : Number(t.amount_minor);
@@ -155,6 +159,7 @@ export function profileRouter({ config, supabase }: { config: AppConfig; supabas
           rand(signed),
           t.direction === "inflow" ? "Money in" : "Money out",
           t.transaction_type,
+          t.channel ?? "unknown",
           one(t.categories as { name: string } | null)?.name ?? "",
           source ? `${formatName(source.bank_format_key)}${source.nickname ? ` ${source.nickname}` : ""}` : "",
           t.excluded_from_totals ? "No" : "Yes",
@@ -190,6 +195,7 @@ export function profileRouter({ config, supabase }: { config: AppConfig; supabas
         amountMinor: Number(t.amount_minor),
         direction: t.direction,
         type: t.transaction_type,
+        channel: t.channel ?? "unknown",
         category: one(t.categories as { name: string } | null)?.name ?? null,
         countedInTotals: !t.excluded_from_totals,
         note: t.note ?? null,

@@ -1,3 +1,4 @@
+import { CHANNEL_LABELS, type Channel } from "../statements/channel.js";
 import { Router } from "express";
 import { z } from "zod";
 import type { SupabaseClients } from "../lib/supabase.js";
@@ -64,7 +65,7 @@ function likePattern(q: string): string {
 const dbError = (what: string) => new HttpError(502, "database_error", `We couldn't ${what}. Please try again.`);
 
 const LIST_COLUMNS =
-  "id, transaction_date, cleaned_description, amount_minor, direction, transaction_type, category_id, excluded_from_totals, import_id, categories(name), statement_sources(bank_format_key, nickname)";
+  "id, transaction_date, cleaned_description, amount_minor, direction, transaction_type, category_id, excluded_from_totals, import_id, channel, categories(name), statement_sources(bank_format_key, nickname)";
 
 type ListRow = {
   id: string;
@@ -76,6 +77,7 @@ type ListRow = {
   category_id: string | null;
   excluded_from_totals: boolean;
   import_id: string;
+  channel?: string | null;
   note?: string | null;
   review_status?: string;
   categories: { name: string } | { name: string }[] | null;
@@ -95,6 +97,8 @@ function toTransaction(row: ListRow) {
     categoryName: categoryNameOf({ ...row, amount_minor: 0 } as never),
     excludedFromTotals: row.excluded_from_totals,
     importId: row.import_id,
+    channel: row.channel ?? "unknown",
+    channelLabel: CHANNEL_LABELS[(row.channel ?? "unknown") as Channel] ?? "Other",
     source: source ? { bankName: formatName(source.bank_format_key), nickname: source.nickname } : null,
   };
 }

@@ -16,7 +16,7 @@ export function fakeDb(tables: Record<string, unknown[]>, rpc: Record<string, un
       return { data: op === "select" ? rows : rows.slice(0, 1), error: null, count: rows.length };
     };
     const chain: Record<string, unknown> = {};
-    const passthrough = ["select", "eq", "neq", "gte", "lte", "lt", "gt", "in", "is", "order", "range", "limit", "ilike", "or"];
+    const passthrough = ["select", "eq", "neq", "gte", "lte", "lt", "gt", "in", "is", "order", "range", "limit", "ilike", "or", "not", "contains"];
     for (const name of passthrough) chain[name] = () => chain;
     for (const name of ["insert", "update", "delete", "upsert"]) {
       chain[name] = (v?: unknown) => {
@@ -26,7 +26,11 @@ export function fakeDb(tables: Record<string, unknown[]>, rpc: Record<string, un
         return chain;
       };
     }
-    chain.maybeSingle = async () => ({ data: (tables[table] ?? [])[0] ?? null, error: null });
+    // After an insert, return the inserted row (with an id) like PostgREST does.
+    chain.maybeSingle = async () =>
+      op === "insert" && value && !Array.isArray(value)
+        ? { data: { id: `new-${table}`, ...(value as object) }, error: null }
+        : { data: (tables[table] ?? [])[0] ?? null, error: null };
     chain.single = chain.maybeSingle;
     chain.then = (resolve: (v: unknown) => unknown) => Promise.resolve(result()).then(resolve);
     return chain;
@@ -34,7 +38,11 @@ export function fakeDb(tables: Record<string, unknown[]>, rpc: Record<string, un
 
   const db = {
     from: vi.fn((table: string) => query(table)),
-    rpc: vi.fn(async (name: string) => ({ data: rpc[name] ?? null, error: null })),
+    // An rpc entry can be a value, or a function returning { data, error } for error cases.
+    rpc: vi.fn(async (name: string, args?: unknown) => {
+      const entry = rpc[name];
+      return typeof entry === "function" ? (entry as (a: unknown) => unknown)(args) : { data: entry ?? null, error: null };
+    }),
   };
   return { db, writes };
 }

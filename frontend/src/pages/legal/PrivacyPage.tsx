@@ -72,7 +72,8 @@ export function PrivacyPage() {
         <h2>3. What we don&apos;t keep</h2>
         <p>
           Your original PDF statements and the raw text inside them are processed in memory only and discarded as soon as
-          processing ends. Before anything is saved, we remove card numbers, account numbers, long reference numbers, phone
+          processing ends. We keep only a one-way fingerprint of the file (a SHA-256 code) so the same statement can&apos;t
+          be imported twice; the PDF can&apos;t be rebuilt from it. Before anything is saved, we remove card numbers, account numbers, long reference numbers, phone
           numbers and email addresses from transaction descriptions. We do not store your ID number, address, or the
           account holder name printed on a statement.
         </p>
@@ -89,11 +90,12 @@ export function PrivacyPage() {
       </section>
 
       <section>
-        <h2>5. Optional AI explanations</h2>
+        <h2>5. Optional AI coach</h2>
         <p>
-          If you switch AI on, pressing a button such as <strong>Explain my spending</strong> sends a short summary to
-          Google&apos;s Gemini service: month totals, category totals, changes from last month, budget status and saving
-          calculations. It never includes your transaction descriptions, PDFs, account numbers, name or email. Google
+          If you switch AI on, pressing a button such as <strong>Coach me</strong> sends a short summary to Google&apos;s
+          Gemini service: month totals, category totals, your savings rate and money-health result, changes from last
+          month, budget status, any goals you set, and saving calculations. You can see exactly what will be sent before
+          you press the button, and every amount in the answer is checked against your figures. It never includes your transaction descriptions, PDFs, account numbers, name or email. Google
           processes that summary under its Gemini API terms; depending on the plan in use, Google may keep it for a
           limited time and may use it to improve its services. You can turn AI off at any time in{' '}
           <Link to="/profile">Profile &amp; privacy</Link>, and RandRoute works fully without it.

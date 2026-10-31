@@ -92,9 +92,26 @@ export type DashboardSummary = {
   netCashFlow: number
   refunds: number
   unclassifiedIn: number
+  transfers: number
+  /** Income split by category, in cents. */
+  income: { salary: number; side: number; other: number }
+  debitOrders: { total: number; count: number }
+  savingsRate: { basisPoints: number | null; percent: number | null }
+  health: {
+    level: 'healthy' | 'watch' | 'at_risk' | 'not_enough_data'
+    provisional: boolean
+    reasons: { code: string; tone: 'good' | 'warning' | 'risk' | 'info'; text: string }[]
+  }
+  goals: {
+    expectedIncomeMinor: number | null
+    savingsTargetMinor: number | null
+    monthlySpendingTargetMinor: number | null
+    savingsTargetMet: boolean | null
+  }
   budgetTarget: number | null
   budgetRemaining: number | null
-  topCategories: Array<{ categoryId: string | null; name: string; total: number; count: number }>
+  budget: { hasBudget: boolean; overCount: number }
+  topCategories: Array<{ categoryId: string | null; name: string; total: number; count: number; sharePercent: number | null }>
   recentTransactions: Array<{
     id: string
     date: string
@@ -102,6 +119,7 @@ export type DashboardSummary = {
     amountMinor: number
     direction: 'inflow' | 'outflow'
     transactionType: 'income' | 'expense' | 'transfer' | 'refund' | 'unknown'
+    channelLabel: string
     categoryName: string | null
   }>
   coverage: {
@@ -110,6 +128,7 @@ export type DashboardSummary = {
     coversWholeMonth: boolean
     hasWarnings: boolean
   }
+  limitations: string[]
 }
 
 export const api = {
@@ -136,65 +155,4 @@ export const api = {
       }),
     me: (token: string) => apiRequest<{ user: Profile }>('/api/auth/me', { token }),
   },
-}
-
-export type StreamEvent = { event: string; data: unknown }
-
-/**
- * POSTs JSON and reads a Server-Sent Events response, calling `onEvent` for
- * each event as it arrives. Errors before the stream starts (e.g. consent
- * required) come back as a normal ApiError.
- */
-export async function streamRequest(
-  path: string,
-  options: { body: unknown; token?: string | null; signal?: AbortSignal; onEvent: (e: StreamEvent) => void },
-): Promise<void> {
-  let response: Response
-  try {
-    response = await fetch(`${BASE_URL}${path}`, {
-      method: 'POST',
-      headers: {
-        Accept: 'text/event-stream',
-        'Content-Type': 'application/json',
-        'X-RandRoute-Client': 'web',
-        ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
-      },
-      body: JSON.stringify(options.body),
-      signal: options.signal,
-      credentials: 'include',
-    })
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') throw error
-    throw new ApiError(0, 'network_error', 'Cannot reach RandRoute right now. Check your connection and try again.')
-  }
-
-  if (!response.ok || !(response.headers.get('content-type') ?? '').includes('text/event-stream') || !response.body) {
-    const data = (await response.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null
-    throw new ApiError(response.status, data?.error?.code ?? 'http_error', data?.error?.message ?? 'Something went wrong. Please try again.')
-  }
-
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    let end: number
-    while ((end = buffer.indexOf('\n\n')) >= 0) {
-      const block = buffer.slice(0, end)
-      buffer = buffer.slice(end + 2)
-      let event = 'message'
-      let data = ''
-      for (const line of block.split('\n')) {
-        if (line.startsWith('event:')) event = line.slice(6).trim()
-        else if (line.startsWith('data:')) data += line.slice(5).trim()
-      }
-      try {
-        options.onEvent({ event, data: data ? JSON.parse(data) : null })
-      } catch {
-        // ignore malformed events
-      }
-    }
-  }
 }

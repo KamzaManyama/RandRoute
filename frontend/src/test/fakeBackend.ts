@@ -55,11 +55,19 @@ export const emptyDashboard = {
   netCashFlow: 0,
   refunds: 0,
   unclassifiedIn: 0,
+  transfers: 0,
+  income: { salary: 0, side: 0, other: 0 },
+  debitOrders: { total: 0, count: 0 },
+  savingsRate: { basisPoints: null, percent: null },
+  health: { level: 'not_enough_data', provisional: true, reasons: [{ code: 'no_statements', tone: 'info', text: 'Import a statement for this month to see your money health.' }] },
+  goals: { expectedIncomeMinor: null, savingsTargetMinor: null, monthlySpendingTargetMinor: null, savingsTargetMet: null },
   budgetTarget: null,
   budgetRemaining: null,
+  budget: { hasBudget: false, overCount: 0 },
   topCategories: [],
   recentTransactions: [],
   coverage: { hasImports: false, statementCount: 0, coversWholeMonth: false, hasWarnings: false },
+  limitations: [],
 }
 
 export const testProfile = {
@@ -68,8 +76,9 @@ export const testProfile = {
   currency: "ZAR",
   monthlyBudgetTargetMinor: null,
   savingsTargetMinor: null,
+  expectedMonthlyIncomeMinor: null,
   setupCompleted: true,
-  ai: { available: true, consent: "not_asked", consentUpdatedAt: null, policyVersion: "2026-10" },
+  ai: { available: true, consent: "not_asked", consentUpdatedAt: null, policyVersion: "2026-11" },
 }
 
 /** Routes every signed-in screen needs. */

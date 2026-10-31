@@ -876,7 +876,7 @@ textarea.field__input {
   }
 }
 
-/* ---- Explain my spending: steps, thinking, answer ---- */
+/* ---- Progress steps ---- */
 .steps {
   list-style: none;
   margin: 0;
@@ -919,63 +919,296 @@ textarea.field__input {
   animation: spin 0.9s linear infinite;
 }
 
-.thinking {
-  background: var(--color-surface-muted);
-  box-shadow: none;
-  border: 1px dashed var(--color-border);
-}
-
-.thinking__summary {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  cursor: pointer;
-  list-style: none;
-}
-
-.thinking__summary::-webkit-details-marker {
-  display: none;
-}
-
-.thinking__badge {
-  border-radius: var(--radius-pill);
-  padding: 4px 10px;
+/* ---- AI coach ---- */
+.status--ai {
   background: var(--color-ink);
   color: var(--color-on-accent);
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.03em;
 }
 
-.thinking__text {
-  margin-top: var(--space-4);
-  display: grid;
-  gap: var(--space-2);
+.coach-figures {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
   color: var(--color-ink-soft);
   font-size: 0.92rem;
-  max-height: 360px;
-  overflow-y: auto;
 }
 
-.thinking__title {
-  font-weight: 700;
+.coach-figures strong {
   color: var(--color-ink);
-  margin-top: var(--space-2);
+  margin-left: 4px;
 }
 
-.thinking__cursor {
-  display: inline-block;
-  width: 8px;
-  height: 1em;
-  background: var(--color-ink);
-  vertical-align: text-bottom;
-  animation: blink 1s steps(2, start) infinite;
+.coach-summary {
+  font-size: 1.05rem;
+  line-height: 1.55;
+  margin: 0;
 }
 
-@keyframes blink {
-  to {
-    visibility: hidden;
+.coach-grid {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 900px) {
+  .coach-grid {
+    grid-template-columns: repeat(3, 1fr);
   }
+}
+
+.coach-list {
+  border-top: 4px solid var(--color-border);
+}
+
+.coach-list--good {
+  border-top-color: var(--color-positive);
+}
+
+.coach-list--warning {
+  border-top-color: var(--color-highlight);
+}
+
+.coach-list--action {
+  border-top-color: var(--color-ink);
+}
+
+.ai-list {
+  margin: 0;
+  padding-left: 1.2em;
+  display: grid;
+  gap: var(--space-2);
+  line-height: 1.5;
+}
+
+.coach-motivation {
+  background: var(--color-ink);
+  color: var(--color-on-accent);
+  font-weight: 600;
+  text-align: center;
+}
+
+.coach-motivation p {
+  margin: 0;
+}
+
+.shared-data {
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface-muted);
+}
+
+.shared-data summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.shared-data dl {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+}
+
+.shared-data__row {
+  display: grid;
+  grid-template-columns: minmax(110px, 1fr) 2fr;
+  gap: var(--space-3);
+  font-size: 0.88rem;
+}
+
+.shared-data dt {
+  color: var(--color-muted);
+}
+
+.shared-data dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.shared-data pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.8rem;
+}
+
+/* ---- Money health ---- */
+.health-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  padding: 4px 12px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.health--good {
+  background: rgb(31 138 76 / 12%);
+  color: var(--color-positive);
+}
+
+.health--watch {
+  background: var(--color-warning-bg);
+  color: var(--color-warning-ink);
+}
+
+.health--risk {
+  background: rgb(192 57 43 / 10%);
+  color: var(--color-negative);
+}
+
+.health--muted {
+  background: rgb(17 17 17 / 6%);
+  color: var(--color-ink-soft);
+}
+
+.health-reasons {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.health-reason {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  line-height: 1.45;
+}
+
+.health-reason__icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 0.75rem;
+  font-weight: 800;
+  background: rgb(17 17 17 / 6%);
+}
+
+.health-reason--good .health-reason__icon {
+  background: rgb(31 138 76 / 14%);
+  color: var(--color-positive);
+}
+
+.health-reason--warning .health-reason__icon {
+  background: var(--color-warning-bg);
+  color: var(--color-warning-ink);
+}
+
+.health-reason--risk .health-reason__icon {
+  background: rgb(192 57 43 / 12%);
+  color: var(--color-negative);
+}
+
+/* ---- Home quick actions ---- */
+.quick-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+@media (min-width: 900px) {
+  .quick-actions {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.quick-action {
+  display: grid;
+  gap: 2px;
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+  color: inherit;
+  text-decoration: none;
+  transition: transform 0.15s ease;
+}
+
+.quick-action:hover {
+  transform: translateY(-1px);
+}
+
+.quick-action:focus-visible {
+  outline: 2px solid var(--color-ink);
+  outline-offset: 2px;
+}
+
+.quick-action__title {
+  font-weight: 700;
+}
+
+.quick-action__meta {
+  color: var(--color-muted);
+  font-size: 0.85rem;
+}
+
+.divider {
+  height: 1px;
+  background: var(--color-border);
+}
+
+/* ---- Review rows: flags and confidence ---- */
+.row-flags {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.row-flag {
+  border-radius: var(--radius-pill);
+  padding: 2px 10px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  background: rgb(17 17 17 / 6%);
+  color: var(--color-ink-soft);
+}
+
+.row-flag--blocking {
+  background: var(--color-warning-bg);
+  color: var(--color-warning-ink);
+}
+
+.confidence--high {
+  color: var(--color-positive);
+}
+
+.confidence--medium {
+  color: var(--color-warning-ink);
+}
+
+.confidence--low {
+  color: var(--color-negative);
+  font-weight: 600;
+}
+
+.review__ack {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  margin-top: var(--space-3);
+  font-size: 0.9rem;
+}
+
+.supported-banks summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.supported-banks ul {
+  margin: var(--space-3) 0;
+  padding-left: 1.2em;
+  display: grid;
+  gap: var(--space-1);
 }
 
 @keyframes spin {
@@ -986,8 +1219,9 @@ textarea.field__input {
 
 @media (prefers-reduced-motion: reduce) {
   .steps__item--active .steps__icon,
-  .thinking__cursor {
+  .quick-action {
     animation: none;
+    transition: none;
   }
 }
 

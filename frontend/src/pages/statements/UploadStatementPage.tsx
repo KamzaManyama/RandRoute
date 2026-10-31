@@ -32,6 +32,7 @@ export function UploadStatementPage() {
   const [periodEnd, setPeriodEnd] = useState('')
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
+  const [existingImportId, setExistingImportId] = useState<string | null>(null)
   const [processing, setProcessing] = useState(false)
   const [dragging, setDragging] = useState(false)
 
@@ -85,7 +86,9 @@ export function UploadStatementPage() {
     } catch (err) {
       if (controller.signal.aborted) return
       if (err instanceof ApiError) {
-        setFieldErrors(err.fields)
+        const { existingImportId: existing, ...fields } = err.fields
+        setFieldErrors(fields)
+        setExistingImportId(err.code === 'duplicate_statement' ? (existing ?? null) : null)
         setError(err.message)
       } else {
         setError('Something went wrong while reading your statement. Please try again.')
@@ -107,8 +110,9 @@ export function UploadStatementPage() {
           <h1>Reading your statement…</h1>
           <p className="muted">This usually takes a few seconds.</p>
           <ul className="upload-processing__steps">
-            <li>Finding transactions and cleaning descriptions</li>
-            <li>Checking each row against the running balance</li>
+            <li>Reading the statement&apos;s columns and finding transactions</li>
+            <li>Removing card numbers, account numbers and other personal details</li>
+            <li>Checking each row against the running balance and statement totals</li>
             <li>Suggesting categories and spotting possible duplicates</li>
           </ul>
           <p className="muted">Nothing is saved until you review and confirm.</p>
@@ -132,7 +136,19 @@ export function UploadStatementPage() {
       />
 
       <form className="card upload-form" onSubmit={onSubmit} noValidate>
-        {error && <FormAlert>{error}</FormAlert>}
+        {error && (
+          <FormAlert>
+            {error}
+            {existingImportId && (
+              <>
+                {' '}
+                <Link to={`/statements/${existingImportId}`} className="text-link">
+                  Open the earlier upload
+                </Link>
+              </>
+            )}
+          </FormAlert>
+        )}
 
         <label
           className={`dropzone${dragging ? ' dropzone--active' : ''}${fieldErrors.file ? ' dropzone--error' : ''}`}
@@ -175,14 +191,34 @@ export function UploadStatementPage() {
             {formats.map((f) => (
               <option key={f.key} value={f.key}>
                 {f.name}
+                {f.support === 'generic' && f.key !== 'generic' ? ' (general rules)' : ''}
               </option>
             ))}
           </select>
           <p className="field__hint">
-            Bank formats are in beta — we check each row against your running balance, but please review before
-            importing.
+            All formats are in beta. Every row is checked against the running balance, and you review everything before it
+            is saved.
           </p>
         </div>
+
+        <details className="supported-banks">
+          <summary>Which banks are supported?</summary>
+          <ul>
+            {formats
+              .filter((f) => f.support === 'layout_rules')
+              .map((f) => (
+                <li key={f.key}>
+                  <strong>{f.name}</strong>
+                  {f.notes ? ` — ${f.notes}` : ''}
+                </li>
+              ))}
+          </ul>
+          <p className="muted small">
+            These have bank-specific rules and are tested against sample statements in each bank&apos;s layout. Other banks
+            are read with general rules that work for most statements with a date, description, amount and balance column.
+            Scanned (image-only) PDFs can&apos;t be read — download the statement from your banking app instead.
+          </p>
+        </details>
 
         <TextField
           label="Nickname (optional)"

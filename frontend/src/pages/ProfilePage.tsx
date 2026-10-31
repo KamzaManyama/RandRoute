@@ -47,6 +47,7 @@ function DetailsCard() {
   const api = useApi()
   const { profile, setProfile } = useProfile()
   const [name, setName] = useState(profile?.displayName ?? '')
+  const [income, setIncome] = useState(toText(profile?.expectedMonthlyIncomeMinor))
   const [budget, setBudget] = useState(toText(profile?.monthlyBudgetTargetMinor))
   const [savings, setSavings] = useState(toText(profile?.savingsTargetMinor))
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -57,10 +58,12 @@ function DetailsCard() {
 
   async function save(event: FormEvent) {
     event.preventDefault()
+    const i = read(income)
     const b = read(budget)
     const s = read(savings)
     const next: Record<string, string> = {}
     if (name.trim().length > 60) next.name = 'Use 60 characters or fewer.'
+    if (i === undefined) next.income = 'Enter an amount like 25000.00'
     if (b === undefined) next.budget = 'Enter an amount like 15000.00'
     if (s === undefined) next.savings = 'Enter an amount like 2000.00'
     setErrors(next)
@@ -68,7 +71,12 @@ function DetailsCard() {
     setSaving(true)
     setMessage(null)
     try {
-      setProfile(await api.profile.update({ displayName: name.trim() || null, monthlyBudgetTargetMinor: b ?? null, savingsTargetMinor: s ?? null }))
+      setProfile(await api.profile.update({
+          displayName: name.trim() || null,
+          expectedMonthlyIncomeMinor: i ?? null,
+          monthlyBudgetTargetMinor: b ?? null,
+          savingsTargetMinor: s ?? null,
+        }))
       setMessage({ tone: 'success', text: 'Saved.' })
     } catch (err) {
       setMessage({ tone: 'error', text: errorText(err, 'We could not save your details.') })
@@ -84,6 +92,15 @@ function DetailsCard() {
       <TextField label="Name (optional)" value={name} maxLength={60} onChange={(e) => setName(e.target.value)} error={errors.name} hint="Only used to greet you." />
       <TextField label="Email" value={profile?.email ?? ''} disabled hint="Your sign-in email." />
       <TextField label="Currency" value="South African rand (ZAR)" disabled />
+      <TextField
+        label="Usual monthly income after tax (optional)"
+        inputMode="decimal"
+        placeholder="e.g. 25000.00"
+        value={income}
+        onChange={(e) => setIncome(e.target.value)}
+        error={errors.income}
+        hint="A goal for planning and coaching. Your totals always use the income on your statements."
+      />
       <TextField label="Monthly spending target (optional)" inputMode="decimal" placeholder="e.g. 15000.00" value={budget} onChange={(e) => setBudget(e.target.value)} error={errors.budget} />
       <TextField label="Monthly savings target (optional)" inputMode="decimal" placeholder="e.g. 2000.00" value={savings} onChange={(e) => setSavings(e.target.value)} error={errors.savings} />
       <div className="form-actions">

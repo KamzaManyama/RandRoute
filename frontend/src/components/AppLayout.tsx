@@ -5,7 +5,7 @@ import {
   BudgetIcon,
   CloseIcon,
   HomeIcon,
-  InsightsIcon,
+  InsightsIcon, CoachIcon,
   MenuIcon,
   ProfileIcon,
   SpendingIcon,
@@ -19,6 +19,7 @@ const NAV_ITEMS = [
   { to: '/spending', label: 'Spending', Icon: SpendingIcon, end: false },
   { to: '/budget', label: 'Budget', Icon: BudgetIcon, end: false },
   { to: '/insights', label: 'Insights', Icon: InsightsIcon, end: false },
+  { to: '/coach', label: 'AI coach', Icon: CoachIcon, end: false },
 ] as const
 
 /**

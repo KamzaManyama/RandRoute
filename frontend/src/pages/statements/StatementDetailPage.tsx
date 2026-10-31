@@ -288,6 +288,16 @@ function ValidationPanel({ detail }: { detail: StatementDetail }) {
       tone: v.totalsCheck === 'passed' ? 'status--good' : v.totalsCheck === 'failed' ? 'status--warn' : 'status--muted',
     },
   ]
+  if (v.columnTotalsCheck && v.columnTotalsCheck !== 'unavailable') {
+    checks.push({
+      label: "Statement's own totals",
+      value: v.columnTotalsCheck === 'passed' ? 'Match our rows' : "Don't match",
+      tone: v.columnTotalsCheck === 'passed' ? 'status--good' : 'status--warn',
+    })
+  }
+  if (v.rowsSkipped > 0) {
+    checks.push({ label: 'Lines left out', value: `${v.rowsSkipped} unreadable`, tone: 'status--warn' })
+  }
   if (detail.statement.status === 'cancelled') return null
   return (
     <section className="card validation">
@@ -319,6 +329,9 @@ function ValidationPanel({ detail }: { detail: StatementDetail }) {
         </ul>
       )}
       <p className="muted validation__note">
+        {v.layoutDetected ? 'Read using the statement’s column headings. ' : 'No column headings found, so amounts were read by position. '}
+        {v.newestFirst ? 'Rows were listed newest-first and have been put in date order. ' : ''}
+        {v.feeRows > 0 ? `${v.feeRows} fee(s) from the bank’s fee column are shown as their own rows. ` : ''}
         Balances come from the statement itself — this is not a live bank balance.
       </p>
     </section>
@@ -347,6 +360,11 @@ function ReviewSection(props: ReviewProps) {
   const id = detail.statement.id
 
   const attention = rows.filter(needsAttention)
+  const unchecked = rows.filter((r) => willImport(r) && r.reviewStatus === 'needs_review')
+  const hasWarnings = detail.statement.warnings.length > 0
+  const [acknowledged, setAcknowledged] = useState(false)
+  const [acceptNote, setAcceptNote] = useState<string | null>(null)
+  const isMismatch = (r: ReviewRow) => r.flags.some((f) => f.code === 'balance_mismatch')
   const duplicates = rows.filter((r) => r.duplicateOf)
   const unresolved = rows.filter((r) => r.duplicateDecision === 'unresolved' && r.include)
   const excluded = rows.filter((r) => !willImport(r))
@@ -380,8 +398,13 @@ function ReviewSection(props: ReviewProps) {
   async function acceptAll() {
     setBusy('acceptAll')
     try {
-      await api.statements.acceptAll(id)
-      setRows(rows.map((r) => (r.reviewStatus === 'needs_review' && !r.duplicateOf ? { ...r, reviewStatus: 'user_confirmed' } : r)))
+      const { accepted } = await api.statements.acceptAll(id)
+      setRows(rows.map((r) => (r.reviewStatus === 'needs_review' && !r.duplicateOf && !isMismatch(r) ? { ...r, reviewStatus: 'user_confirmed' } : r)))
+      const left = rows.filter((r) => r.reviewStatus === 'needs_review' && (r.duplicateOf || isMismatch(r))).length
+      setAcceptNote(
+        `Marked ${accepted} row${accepted === 1 ? '' : 's'} as checked.` +
+          (left > 0 ? ` ${left} still need a look one by one (possible duplicates or balance mismatches).` : ''),
+      )
     } catch (err) {
       setActionError(errorText(err, 'We could not update the rows.'))
     } finally {
@@ -393,7 +416,7 @@ function ReviewSection(props: ReviewProps) {
     setBusy('confirm')
     setActionError(null)
     try {
-      const { saved } = await api.statements.confirm(id)
+      const { saved } = await api.statements.confirm(id, acknowledged)
       navigate(`/statements/${id}`, {
         replace: true,
         state: { notice: `Imported ${saved} transaction${saved === 1 ? '' : 's'}. Your totals are updated.` },
@@ -467,8 +490,21 @@ function ReviewSection(props: ReviewProps) {
             {excluded.length > 0 ? `${excluded.length} excluded. ` : ''}
             {unresolved.length > 0
               ? `Decide on ${unresolved.length} possible duplicate${unresolved.length === 1 ? '' : 's'} first.`
-              : 'Nothing is saved until you confirm.'}
+              : unchecked.length > 0
+                ? `Check ${unchecked.length} row${unchecked.length === 1 ? '' : 's'} marked for review first.`
+                : 'Nothing is saved until you confirm.'}
           </p>
+          {acceptNote && (
+            <p className="small" role="status">
+              {acceptNote}
+            </p>
+          )}
+          {hasWarnings && (
+            <label className="checkbox review__ack">
+              <input type="checkbox" checked={acknowledged} onChange={(e) => setAcknowledged(e.target.checked)} />
+              <span>I&apos;ve read the warnings above and checked the rows against my statement.</span>
+            </label>
+          )}
         </div>
         <div className="review__actions">
           {props.confirmingCancel ? (
@@ -486,7 +522,7 @@ function ReviewSection(props: ReviewProps) {
               <button type="button" className="button button--ghost" onClick={() => props.setConfirming('cancel')}>
                 Cancel import
               </button>
-              {attention.some((r) => r.reviewStatus === 'needs_review' && !r.duplicateOf) && (
+              {attention.some((r) => r.reviewStatus === 'needs_review' && !r.duplicateOf && !isMismatch(r)) && (
                 <button type="button" className="button button--ghost" onClick={acceptAll} disabled={busy !== null}>
                   Mark all as checked
                 </button>
@@ -495,7 +531,7 @@ function ReviewSection(props: ReviewProps) {
                 type="button"
                 className="button"
                 onClick={confirm}
-                disabled={busy !== null || unresolved.length > 0 || included.length === 0}
+                disabled={busy !== null || unresolved.length > 0 || unchecked.length > 0 || included.length === 0 || (hasWarnings && !acknowledged)}
               >
                 {busy === 'confirm' ? 'Importing…' : `Import ${included.length} transactions`}
               </button>
@@ -519,8 +555,10 @@ function ReviewRowItem({
   const [editing, setEditing] = useState(false)
   const unchecked = row.reviewStatus === 'needs_review'
   const excluded = !willImport(row)
-  const lowExtraction = (row.extractionConfidence ?? 1) < 0.75
   const lowCategory = (row.categoryConfidence ?? 1) < 0.6
+  const confidence = Math.min(row.extractionConfidence ?? 1, row.categoryConfidence ?? 1)
+  const confidenceLabel = confidence >= 0.9 ? 'High confidence' : confidence >= 0.6 ? 'Medium confidence' : 'Low confidence'
+  const visibleFlags = row.flags.filter((f) => f.code !== 'fee_split' || !unchecked)
 
   return (
     <li className={`review-row${unchecked ? ' review-row--attention' : ''}${excluded ? ' review-row--excluded' : ''}`}>
@@ -538,7 +576,11 @@ function ReviewRowItem({
         </label>
         <div className="review-row__text">
           <strong>{row.description}</strong>
-          <small className="muted">{formatDate(row.date)}</small>
+          <small className="muted">
+            {formatDate(row.date)} · {row.channelLabel}
+            {' · '}
+            <span className={`confidence confidence--${confidence >= 0.9 ? 'high' : confidence >= 0.6 ? 'medium' : 'low'}`}>{confidenceLabel}</span>
+          </small>
         </div>
         <strong className={`review-row__amount ${row.direction === 'inflow' ? 'positive' : ''}`}>
           {signedMoney(row.amountMinor, row.direction)}
@@ -579,10 +621,20 @@ function ReviewRowItem({
         </button>
       </div>
 
+      {visibleFlags.length > 0 && (
+        <ul className="row-flags" aria-label="Checks for this row">
+          {visibleFlags.map((f) => (
+            <li key={f.code} className={`row-flag${f.blocking ? ' row-flag--blocking' : ''}`}>
+              {f.label}
+            </li>
+          ))}
+        </ul>
+      )}
+
       {unchecked && (
         <p className="review-row__why">
-          {lowExtraction && 'The amount or direction didn’t match the running balance — please check it. '}
-          {!lowExtraction && lowCategory && 'We weren’t sure about the category or type. '}
+          {row.flags.length === 0 && lowCategory && 'We weren’t sure about the category or type. '}
+          {row.flags.length === 0 && !lowCategory && !row.duplicateOf && 'Please check this row against your statement. '}
           {row.duplicateOf && 'This might already be saved from another statement.'}
           {!row.duplicateOf && (
             <button

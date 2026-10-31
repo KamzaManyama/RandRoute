@@ -41,8 +41,9 @@ export function monthLabel(month: string): string {
   return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString('en-ZA', { month: 'long', year: 'numeric', timeZone: 'UTC' })
 }
 
-export function currentMonth(): string {
-  return new Date().toISOString().slice(0, 7)
+/** The current month in South Africa (UTC+2 all year), matching the backend's month boundaries. */
+export function currentMonth(now: Date = new Date()): string {
+  return new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString().slice(0, 7)
 }
 
 export function isMonth(value: string | null | undefined): value is string {
@@ -61,4 +62,9 @@ export function changeLabel(changePercent: number | null, previousTotal: number 
   if (changePercent === null) return null
   if (changePercent === 0) return 'Same as last month'
   return `${changePercent > 0 ? '+' : '−'}${Math.abs(changePercent)}% vs last month`
+}
+
+/** Savings rate as "24.5%", or a dash when there's no income to compare against. */
+export function savingsRateLabel(percent: number | null): string {
+  return percent === null ? '—' : `${percent.toLocaleString('en-ZA', { maximumFractionDigits: 1 })}%`
 }

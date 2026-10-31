@@ -48,9 +48,9 @@ describe("summarise (README financial rules)", () => {
       tx({ category_id: null, categories: null, amount_minor: 500 }),
     ]);
     expect(totals.categories).toEqual([
-      { categoryId: "rent", name: "Rent", total: 8000, count: 1 },
-      { categoryId: "groceries", name: "Groceries", total: 3000, count: 2 },
-      { categoryId: null, name: "Uncategorised", total: 500, count: 1 },
+      { categoryId: "rent", key: null, name: "Rent", total: 8000, count: 1 },
+      { categoryId: "groceries", key: null, name: "Groceries", total: 3000, count: 2 },
+      { categoryId: null, key: null, name: "Uncategorised", total: 500, count: 1 },
     ]);
   });
 });

@@ -23,9 +23,10 @@ RandRoute is a personal-finance web application that helps individuals understan
 13. [Financial calculation rules](#financial-calculation-rules)
 14. [Repository structure](#repository-structure)
 15. [Development setup](#development-setup)
-16. [Quality and acceptance criteria](#quality-and-acceptance-criteria)
-17. [Roadmap](#roadmap)
-18. [Contribution and decision rule](#contribution-and-decision-rule)
+16. [How it works](#how-it-works)
+17. [Quality and acceptance criteria](#quality-and-acceptance-criteria)
+18. [Roadmap](#roadmap)
+19. [Contribution and decision rule](#contribution-and-decision-rule)
 
 ---
 
@@ -570,7 +571,7 @@ This section defines expected behaviour for the 16 primary screen groups. These 
 - Select a trend or category.
 - Request an explanation or budget suggestion.
 - Inspect supporting transactions.
-- Continue to Explain my spending (Screen 15).
+- Continue to the AI coach (Screen 15).
 
 **Rules**
 - Opening the screen must not call Gemini.
@@ -582,32 +583,36 @@ This section defines expected behaviour for the 16 primary screen groups. These 
 **States**
 - No history, insufficient comparison data, populated, partial coverage, AI not requested, AI unavailable/quota exhausted, analysis failure.
 
-### Screen 15 — Explain my spending (AI summary)
+### Screen 15 — AI coach
 
-**Purpose:** Give a plain-language explanation of the user's own spending for a month, with practical ideas to improve. There is **no free-typed question box** — people can't steer the AI with unusual or unsafe questions; it only ever explains their own figures.
+**Purpose:** Turn the month's calculated figures into plain-language coaching. There is **no free-typed question box** — the AI only ever explains the user's own figures.
 
-**Where:** The **Explain my spending** button in the Insights header (Screen 14), next to the month picker. Budget planning (Screen 13) has a separate, optional "Review my plan with AI".
+**Where:** `/coach`, from the side navigation, the Home quick actions, or **Ask the AI coach** on Insights. Budget planning (Screen 13) has a separate, optional "Review my plan with AI".
 
-**What the explanation contains** (always these three sections):
-1. **Where your money went** — biggest categories, money in vs money out.
-2. **What changed** — changes from last month, unusual spending, budget limits (or why there's nothing to compare).
-3. **How you could improve** — 2–4 practical ideas based on their own categories and figures.
+**What the answer contains** (a fixed JSON shape, validated on the server):
+- `summary` — 2–3 sentences on money in vs out, savings rate and biggest categories
+- `positives` — 3 things that went well
+- `concerns` — 3 biggest issues
+- `actions` — 3 practical next steps (using the app's own saving-opportunity figures)
+- `motivation` — one encouraging sentence, no numbers
 
 **Request flow**
-1. User presses **Explain my spending**.
-2. Server validates authentication, AI consent (current policy version) and the daily limit (20 per user).
-3. RandRoute computes the month's figures.
-4. Only the minimum de-identified summary (category totals, changes, budget status, coverage limitations) is sent to Gemini — never descriptions, PDFs, account numbers, names or emails.
-5. The answer is shown labelled "Written by AI", with a "What was shared with the AI" panel.
+1. Opening the page calls `GET /api/coach/preview`, which shows **exactly** what would be shared. No AI call.
+2. User presses **Coach me on <month>**; consent is asked in place if needed.
+3. Server checks authentication, AI consent (current policy version), the daily limit (20 per user), and that the month has imported data.
+4. `buildCoachInput` (backend/src/ai/coachInput.ts) builds the summary and validates it against a **strict whitelist schema**: formatted rand strings, category totals and shares, savings rate, money-health level and reasons, budget status, month-over-month change, debit-order total, the user's goals, saving opportunities, limitations. Unknown fields are rejected, so descriptions, single-transaction dates, account numbers, names and emails can't be sent.
+5. Gemini answers in JSON. The server validates the shape, then runs the **grounding check** (backend/src/ai/grounding.ts): every rand amount and percentage must be one the app sent (rounding to the nearest rand/percent is allowed). Points with invented or recalculated figures, or off-limits advice (crypto, loans, "current balance"…), are removed.
+6. If the summary itself fails, the model is asked once more with a stricter reminder; if it fails again, the user sees "couldn't be checked against your figures" and nothing unverified is shown.
+7. The answer is labelled **Written by AI**, with how many figures were checked, how many points were removed, and the exact data shared.
 
 **Rules**
-- Gemini is never the calculator or source of truth.
+- Gemini is never the calculator or source of truth. Totals, savings rate and money health come from fixed app rules.
 - Never expose the API key in the browser.
 - If the main model is busy, a backup model is tried once; if AI is unavailable, the app says so and all figures keep working.
 - No investment, credit, tax or legal advice; no guaranteed outcomes.
 
 **States**
-- Not requested, consent required, generating, answer shown, AI switched off, daily limit reached, AI unavailable.
+- No data for the month, preview shown, consent required, generating, answer shown, answer couldn't be verified, AI switched off, daily limit reached, AI unavailable.
 
 ### Screen 16 — Profile and privacy settings
 
@@ -906,10 +911,15 @@ RandRoute/
 │       ├── 20261024000003_functions.sql         # sign-up trigger, confirm/cancel import, deletion
 │       ├── 20261024000004_seed_categories.sql   # shared system categories
 │       ├── 20261024000005_fix_count_trigger_cascade.sql  # lets accounts with transactions be deleted
-│       └── 20261024000006_budgets_and_account.sql        # save_budget (atomic budget save)
+│       ├── 20261024000006_budgets_and_account.sql        # save_budget (atomic budget save)
+│       └── 20261031000007_channels_flags_safer_confirm.sql  # channels, row flags, file fingerprint, stricter confirm
 ├── backend/                  # Express + TypeScript API (owns Supabase + Gemini)
 │   ├── src/
 │   │   ├── config/env.ts     # validates environment variables at startup
+│   │   ├── statements/       # PDF → rows: extractText, layout (column headers), parser,
+│   │   │                     #   formats (bank profiles), channel, categorise, clean, dates, money
+│   │   ├── finance/          # rules (totals, coverage, budgets), health (savings rate, money health), insights
+│   │   ├── ai/               # coachInput (whitelisted AI input), grounding (number check), coach
 │   │   ├── lib/              # Supabase and Gemini clients
 │   │   ├── middleware/       # auth check, error handling
 │   │   ├── routes/           # API routes
@@ -936,7 +946,7 @@ Do not add secrets or real bank statements to this repository.
 ### 1. Create the Supabase project
 
 1. Create a project at [supabase.com](https://supabase.com). Pick the region closest to South Africa that's available.
-2. Open **SQL Editor** and run each file in [`supabase/migrations/`](supabase/migrations/) **in filename order** (1 → 6). Each file runs on its own.
+2. Open **SQL Editor** and run each file in [`supabase/migrations/`](supabase/migrations/) **in filename order** (1 → 7). Each file runs on its own.
    - Or, with the Supabase CLI: `npx supabase link --project-ref <your-ref>` then `npx supabase db push`.
 3. **Authentication → Sign In / Providers → Email**: keep Email enabled and turn on **Confirm email**.
 4. **Authentication → URL Configuration**:
@@ -966,7 +976,7 @@ npm run dev                     # http://localhost:4000
 Check the setup:
 
 - `http://localhost:4000/api/health` → `{"status":"ok", ...}`
-- `http://localhost:4000/api/health/db` → `{"database":"ok","systemCategories":24}` once the migrations have been run.
+- `http://localhost:4000/api/health/db` → `{"database":"ok","systemCategories":26}` once the migrations have been run.
 
 ### 3. Run the frontend
 
@@ -982,19 +992,63 @@ In development, Vite forwards `/api` requests to the backend, so the frontend ne
 
 | Command | What it checks |
 | --- | --- |
-| `cd backend && npm test` | Config, auth flows, PDF reading and statement parsing (synthetic PDFs), categorising, health and security |
-| `cd backend && npm run test:db` | Applies all migrations to an in-memory Postgres and checks RLS, import confirmation, duplicates, and deletion |
-| `cd frontend && npm test` | Sign-in/register/forgot password, side navigation, Statements upload → review → import |
+| `cd backend && npm test` | Config, auth flows; PDF → rows for six SA bank layouts (synthetic PDFs); validation flags; channels and categories; upload → stage → confirm over HTTP; financial rules, savings rate, money health and SA month boundaries; AI input whitelist, grounding check and coach endpoints |
+| `cd backend && npm run test:db` | Applies all migrations to an in-memory Postgres and checks RLS, import confirmation (review, warnings, duplicates, empty imports), and deletion |
+| `cd frontend && npm test` | Sign-in/register/forgot password, navigation, Home health and savings rate, Statements upload → review (flags, acknowledgement) → import, Insights, AI coach consent and labelling |
 
 ### Sample statements and demo account
 
 `cd backend && npm run demo` (with the backend running) creates or resets **kmanyama009+demo@gmail.com** with six months of synthetic statements and prints a new password.
 
-`cd backend && npm run fixtures` writes two synthetic statements (FNB-style and Capitec-style, made-up data) to `backend/fixtures/`. Upload them on the Statements screen to try the full import flow. PDFs are git-ignored.
+`cd backend && npm run fixtures` writes synthetic statements (made-up data) in the FNB, Capitec, Absa, Standard Bank, Nedbank and TymeBank column layouts to `backend/fixtures/`. Upload them on the Statements screen to try the full import flow. PDFs are git-ignored.
 
-Bank formats are marked **beta** until each one is tested against real, anonymised statements. Every imported row is checked against the statement's running balance, and anything that doesn't match is flagged for review.
+Bank formats are marked **beta** until each one is tested against real, anonymised statements. See **Statement formats** below for what each one handles.
 
 Never commit `.env`, API keys, service-role keys, real bank statements, or personal financial data.
+
+---
+
+## How it works
+
+```text
+Browser (React)  ──HTTPS──▶  Express API (Node)  ──▶  Supabase Postgres (RLS on every table)
+   no secrets                 owns all maths              integer cents, ownership rules
+                              │
+                              └──▶ Gemini (only after a button press, with a whitelisted summary)
+```
+
+### Statement pipeline
+
+1. **Upload** (`POST /api/statements/upload`): PDF kept in memory only, 10 MB limit, `%PDF-` check. A SHA-256 fingerprint is compared with earlier imports; the same file can't be imported twice. The bytes are zeroed after reading.
+2. **Extract** (`statements/extractText.ts`): pdf.js text with positions → lines → cells. Encrypted, scanned and over-long PDFs get specific messages.
+3. **Layout** (`statements/layout.ts`): finds the table header (Date / Description / Debit / Credit / Fee / Balance, and Capitec/TymeBank "Money in/out") and remembers each column's position, so amounts are read **by column**, not guessed by order.
+4. **Parse** (`statements/parser.ts`): transaction lines (date anywhere for date-in-the-middle layouts), wrapped descriptions, newest-first statements reversed. Direction is decided by, in order: running-balance change (confidence 0.98) → Debit/Credit column (0.9) → Cr/Dr/minus marker (0.85) → bank sign convention (0.8/0.7). Fee columns: split into their own row when the balance shows the fee was taken on that line (Capitec), ignored when only accrued (FNB).
+5. **Validate**: running balance per row, opening + rows = closing, and the statement's own "Total debits/credits" lines. Each row gets flags — `balance_mismatch`, `direction_guessed`, `outside_period`, `future_date`, `large_amount`, `repeat_in_statement`, `fee_unverified` — and any of these sends it to review. Lines that look like transactions but can't be read are **counted and reported**, never dropped silently.
+6. **Clean and classify**: card/account/ID/phone numbers and emails stripped from descriptions; payment **channel** (card purchase, debit order, EFT, ATM, fee, interest, prepaid, own-account transfer, reversal); **category** from channel + SA merchant keywords; uncertain guesses go to review.
+7. **Duplicates**: rows matching a saved transaction (same date, amount, direction and a similar description) must be resolved by the user. Overlapping statement periods are called out.
+8. **Review** (Screens 08–09): edit any value, see flags, confidence and channel. "Mark all as checked" skips duplicates and balance mismatches.
+9. **Confirm** (`confirm_import` in SQL, one transaction): refuses while rows still need review or duplicates are unresolved, refuses an empty import, and needs an explicit acknowledgement when the statement has warnings. Imports with warnings are saved as `partial` and labelled everywhere.
+
+### Statement formats
+
+| Bank | Support | What the rules handle |
+| --- | --- | --- |
+| FNB | Layout rules | "Cr" marks credits; accrued bank-charges column ignored |
+| Capitec | Layout rules | Money in / Money out / Fee / Balance; same-line fees split out |
+| Absa | Layout rules | Charge / Debit amount / Credit amount / Balance; statement totals check |
+| Standard Bank | Layout rules | Details / Debits / Credits / **Date** / Balance (date not first); minus signs |
+| Nedbank | Layout rules | Fees / Debits / Credits / Balance, direction from the column |
+| TymeBank | Layout rules | Newest-first rows; Money out / Money in / Fees / Balance |
+| Discovery, African Bank, Investec, other | General rules | Any statement with date, description, amount (and ideally balance) columns |
+
+"Layout rules" means bank-specific settings plus automated tests against synthetic statements built to that bank's published layout. **None has been verified against real statements yet**; that is the next step before removing the beta label. To add a bank: add a profile in `statements/formats.ts`, a fixture in `statements/fixtures.ts`, and a test in `statements/layouts.test.ts`.
+
+### Financial rules in code
+
+- `finance/rules.ts` — money in (confirmed income only), money out (expenses minus refunds), transfers excluded, income split into salary / side income / other, debit-order total, month coverage, budget status.
+- `finance/health.ts` — savings rate in integer basis points; money-health level (`healthy`, `watch`, `at_risk`, `not_enough_data`) from fixed, documented thresholds, each with the reason and the figure behind it; provisional for partial months.
+- `finance/insights.ts` — one calculation used by Home, Insights and the AI coach, so every screen shows the same numbers.
+- Months use South African time (UTC+2) on both backend and frontend.
 
 ---
 

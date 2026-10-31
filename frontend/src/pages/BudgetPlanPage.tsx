@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { useApi, type AiAnswer, type BudgetView, type Category } from '../lib/useApi'
+import { useApi, type BudgetReviewResult, type BudgetView, type Category } from '../lib/useApi'
 import { ApiError } from '../lib/api'
 import { currentMonth, isMonth, money, monthLabel, parseRandInput } from '../lib/format'
 import { PageHeader, Stat, Stats } from '../components/ui'
 import { FormAlert } from '../components/forms'
-import { AiAnswerCard, AiConsentPanel, AiUnavailableNote } from '../components/ai'
+import { AiConsentPanel, AiUnavailableNote, BudgetReviewCard } from '../components/ai'
 import { useProfile } from '../auth/profileContext'
 
 type Row = { key: number; categoryId: string; amount: string }
@@ -41,7 +41,7 @@ export function BudgetPlanPage() {
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
-  const [ai, setAi] = useState<{ state: 'idle' | 'consent' | 'loading' } | { state: 'done'; answer: AiAnswer } | { state: 'error'; message: string }>({
+  const [ai, setAi] = useState<{ state: 'idle' | 'consent' | 'loading' } | { state: 'done'; answer: BudgetReviewResult } | { state: 'error'; message: string }>({
     state: 'idle',
   })
 
@@ -289,7 +289,7 @@ export function BudgetPlanPage() {
 
       {ai.state === 'consent' && <AiConsentPanel onDone={(granted) => (granted ? void askAi(true) : setAi({ state: 'idle' }))} />}
       {ai.state === 'error' && <FormAlert>{ai.message}</FormAlert>}
-      {ai.state === 'done' && <AiAnswerCard answer={ai.answer} title="AI suggestions for your plan" />}
+      {ai.state === 'done' && <BudgetReviewCard result={ai.answer} />}
 
       <section className="card form-actions plan-actions">
         <Link to={`/budget?month=${month}`} className="button button--ghost">

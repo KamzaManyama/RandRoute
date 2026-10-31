@@ -1,27 +1,112 @@
 /**
- * Bank statement formats. All use the same generic parser for now and are
- * marked "beta": the README requires each format to be tested against real
- * (anonymised) statements before it is advertised as supported.
+ * Bank statement profiles.
+ *
+ * Parsing is column-aware and generic (see layout.ts and parser.ts). A profile
+ * adds what is specific to one bank:
+ *   - how to recognise its statements
+ *   - how it marks money in/out when there is no running balance to check
+ *   - whether its "fees" column is already deducted on the same line
+ *     (Capitec) or only accrued and charged later as its own line (FNB)
+ *
+ * `support` is shown to users so we never over-promise:
+ *   - "layout_rules": bank-specific rules + automated tests against synthetic
+ *     statements built to that bank's published column layout
+ *   - "generic": read with the generic rules only
+ * Every format is still "beta" until it has been checked against real,
+ * anonymised statements (see README → Statement formats).
  */
-export type BankFormat = { key: string; name: string; match?: RegExp; status: "beta" };
+export type SignConvention =
+  /** Credits carry "Cr"; unmarked amounts are money out (FNB). */
+  | "cr_marks_credit"
+  /** Debits carry "-"; unmarked amounts are money in (Capitec, TymeBank, Standard Bank digital). */
+  | "minus_marks_debit"
+  /** Work it out from the statement itself. */
+  | "infer";
+
+export type FeeColumn = "deducted_on_line" | "accrued_separately" | "unknown";
+
+export type BankFormat = {
+  key: string;
+  name: string;
+  match?: RegExp;
+  status: "beta";
+  support: "layout_rules" | "generic";
+  signConvention: SignConvention;
+  feeColumn: FeeColumn;
+  /** Short note shown on the upload screen. */
+  notes?: string;
+};
 
 export const BANK_FORMATS: BankFormat[] = [
-  { key: "fnb", name: "FNB", match: /first national bank|fnb\.co\.za|\bfnb\b/i, status: "beta" },
-  { key: "capitec", name: "Capitec", match: /capitec/i, status: "beta" },
+  {
+    key: "fnb",
+    name: "FNB",
+    match: /first national bank|fnb\.co\.za|\bfnb\b/i,
+    status: "beta",
+    support: "layout_rules",
+    signConvention: "cr_marks_credit",
+    feeColumn: "accrued_separately",
+    notes: "Cheque, savings and credit card statements with a running balance.",
+  },
+  {
+    key: "capitec",
+    name: "Capitec",
+    match: /capitec/i,
+    status: "beta",
+    support: "layout_rules",
+    signConvention: "minus_marks_debit",
+    feeColumn: "deducted_on_line",
+    notes: "Money in / Money out / Fee / Balance layout.",
+  },
+  {
+    key: "absa",
+    name: "Absa",
+    match: /\babsa\b|absa\.co\.za/i,
+    status: "beta",
+    support: "layout_rules",
+    signConvention: "infer",
+    feeColumn: "unknown",
+    notes: "Debit amount / Credit amount / Balance layout.",
+  },
   {
     key: "standard_bank",
     name: "Standard Bank",
     match: /standard\s*bank|standardbank\.co\.za|1962\/000738\/06/i,
     status: "beta",
+    support: "layout_rules",
+    signConvention: "minus_marks_debit",
+    feeColumn: "unknown",
+    notes: "Details / Debits / Credits / Date / Balance layout, including the date-in-the-middle style.",
   },
-  { key: "absa", name: "Absa", match: /\babsa\b|absa\.co\.za/i, status: "beta" },
-  { key: "nedbank", name: "Nedbank", match: /nedbank/i, status: "beta" },
-  { key: "tymebank", name: "TymeBank", match: /tyme\s?bank/i, status: "beta" },
-  { key: "discovery", name: "Discovery Bank", match: /discovery bank/i, status: "beta" },
-  { key: "african_bank", name: "African Bank", match: /african bank/i, status: "beta" },
-  { key: "investec", name: "Investec", match: /investec/i, status: "beta" },
-  { key: "generic", name: "Other bank", status: "beta" },
+  {
+    key: "nedbank",
+    name: "Nedbank",
+    match: /nedbank/i,
+    status: "beta",
+    support: "layout_rules",
+    signConvention: "infer",
+    feeColumn: "unknown",
+    notes: "Fees / Debits / Credits / Balance layout.",
+  },
+  {
+    key: "tymebank",
+    name: "TymeBank",
+    match: /tyme\s?bank/i,
+    status: "beta",
+    support: "layout_rules",
+    signConvention: "minus_marks_debit",
+    feeColumn: "deducted_on_line",
+    notes: "Money out / Money in / Fees / Balance layout.",
+  },
+  { key: "discovery", name: "Discovery Bank", match: /discovery bank/i, status: "beta", support: "generic", signConvention: "infer", feeColumn: "unknown" },
+  { key: "african_bank", name: "African Bank", match: /african bank/i, status: "beta", support: "generic", signConvention: "infer", feeColumn: "unknown" },
+  { key: "investec", name: "Investec", match: /investec/i, status: "beta", support: "generic", signConvention: "infer", feeColumn: "unknown" },
+  { key: "generic", name: "Other bank", status: "beta", support: "generic", signConvention: "infer", feeColumn: "unknown" },
 ];
+
+export function getFormat(key: string): BankFormat {
+  return BANK_FORMATS.find((f) => f.key === key) ?? BANK_FORMATS.at(-1)!;
+}
 
 export function formatName(key: string): string {
   return BANK_FORMATS.find((f) => f.key === key)?.name ?? "Other bank";

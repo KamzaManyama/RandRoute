@@ -48,6 +48,8 @@ const tx = (over: Partial<Transaction> = {}): Transaction => ({
   categoryName: 'Groceries',
   excludedFromTotals: false,
   importId: 'imp-1',
+  channel: 'card_purchase',
+  channelLabel: 'Card purchase',
   source: { bankName: 'FNB', nickname: 'Cheque' },
   ...over,
 })

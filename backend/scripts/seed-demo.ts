@@ -58,7 +58,12 @@ async function importPdf(name: string, bytes: Uint8Array, nickname?: string) {
   const up = await fetch(`${API}/statements/upload`, { method: "POST", headers: auth, body: form }).then((r) => r.json());
   if (!up.importId) throw new Error(`Upload failed for ${name}: ${JSON.stringify(up)}`);
   await fetch(`${API}/statements/${up.importId}/accept-all`, { method: "POST", headers: auth });
-  const done = await fetch(`${API}/statements/${up.importId}/confirm`, { method: "POST", headers: auth }).then((r) => r.json());
+  // Demo data only: synthetic statements, so warnings are acknowledged automatically.
+  const done = await fetch(`${API}/statements/${up.importId}/confirm`, {
+    method: "POST",
+    headers: { ...auth, "Content-Type": "application/json" },
+    body: JSON.stringify({ acknowledgeWarnings: true }),
+  }).then((r) => r.json());
   console.log(`  ${name}: ${done.saved ?? JSON.stringify(done)} transactions imported`);
 }
 

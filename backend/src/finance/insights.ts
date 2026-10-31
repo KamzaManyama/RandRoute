@@ -5,6 +5,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchImports, fetchTransactions } from "./queries.js";
 import { coverageFor, limitStatus, monthRange, shiftMonth, summarise, type Coverage } from "./rules.js";
+import { assessHealth, bpToPercent, savingsRateBp } from "./health.js";
 
 const HISTORY_MONTHS = 6;
 /** A rise must be at least this much (cents) AND 30% above average to be called unusual. */
@@ -16,13 +17,17 @@ export type MonthInsights = Awaited<ReturnType<typeof buildInsights>>;
 
 export async function buildInsights(db: SupabaseClient, month: string) {
   const start = monthRange(shiftMonth(month, -HISTORY_MONTHS)).start;
-  const [rows, imports, budget] = await Promise.all([
+  const [rows, imports, budget, prefs] = await Promise.all([
     fetchTransactions(db, { start, end: monthRange(month).end }),
     fetchImports(db),
     db
       .from("monthly_budgets")
-      .select("budget_category_limits(category_id, limit_minor, categories(name))")
+      .select("expected_income_minor, savings_target_minor, budget_category_limits(category_id, limit_minor, categories(name))")
       .eq("month", `${month}-01`)
+      .maybeSingle(),
+    db
+      .from("user_preferences")
+      .select("monthly_budget_target_minor, savings_target_minor, expected_monthly_income_minor")
       .maybeSingle(),
   ]);
 
@@ -105,6 +110,32 @@ export async function buildInsights(db: SupabaseClient, month: string) {
     return { name: cat?.name ?? "Category", limitMinor: Number(l.limit_minor), spentMinor: spent, status: limitStatus(Number(l.limit_minor), spent) };
   });
 
+  const rate = savingsRateBp(current.moneyIn, current.moneyOut);
+  const byKey = (key: string) => current.categories.find((c) => c.key === key)?.total ?? 0;
+  const moneyOutChangePercent =
+    comparable && previous.moneyOut ? Math.round(((current.moneyOut - previous.moneyOut) / previous.moneyOut) * 100) : null;
+  const health = assessHealth({
+    coverage,
+    incomeMinor: current.moneyIn,
+    spendingMinor: current.moneyOut,
+    unclassifiedInMinor: current.unclassifiedIn,
+    feesMinor: byKey("bank_fees"),
+    debtRepaymentsMinor: byKey("debt_repayments"),
+    spendingChangePercent: moneyOutChangePercent,
+    budgetStatuses: limits.map((l) => l.status),
+  });
+
+  const p = (prefs.data ?? {}) as Record<string, number | null>;
+  const b = (budget.data ?? {}) as Record<string, unknown>;
+  const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+  const goals = {
+    // The month's budget plan wins over the general preference.
+    expectedIncomeMinor: num(b.expected_income_minor) ?? num(p.expected_monthly_income_minor),
+    savingsTargetMinor: num(b.savings_target_minor) ?? num(p.savings_target_minor),
+    monthlySpendingTargetMinor: num(p.monthly_budget_target_minor),
+  };
+  const savedMinor = current.moneyIn - current.moneyOut;
+
   const limitations: string[] = [];
   if (!coverage.hasImports) limitations.push("No imported statements cover this month.");
   else if (!coverage.coversWholeMonth) limitations.push("Your statements only cover part of this month, so totals may be incomplete.");
@@ -122,10 +153,26 @@ export async function buildInsights(db: SupabaseClient, month: string) {
       refundsMinor: current.refunds,
       unclassifiedInMinor: current.unclassifiedIn,
       previousMoneyOutMinor: comparable ? previous.moneyOut : null,
-      moneyOutChangePercent: comparable && previous.moneyOut ? Math.round(((current.moneyOut - previous.moneyOut) / previous.moneyOut) * 100) : null,
+      moneyOutChangePercent,
+      income: current.income,
+      debitOrders: current.debitOrders,
+      transfersMinor: current.transfers,
+    },
+    savingsRate: { basisPoints: rate, percent: bpToPercent(rate) },
+    health,
+    goals: {
+      ...goals,
+      savingsTargetMet:
+        goals.savingsTargetMinor === null || current.moneyIn === 0 ? null : savedMinor >= goals.savingsTargetMinor,
     },
     comparison,
-    topCategories: current.categories.slice(0, 5).map((c) => ({ categoryId: c.categoryId, name: c.name, totalMinor: c.total, count: c.count })),
+    topCategories: current.categories.slice(0, 5).map((c) => ({
+      categoryId: c.categoryId,
+      name: c.name,
+      totalMinor: c.total,
+      count: c.count,
+      sharePercent: current.moneyOut > 0 ? Math.round((c.total / current.expenses) * 100) : null,
+    })),
     savings: savingsIdeas(current.categories, limits),
     changes,
     unusual,
@@ -175,44 +222,4 @@ export function savingsIdeas(
     .filter((l) => l.spentMinor > l.limitMinor)
     .map((l) => ({ name: l.name, overByMinor: l.spentMinor - l.limitMinor }));
   return { trims, overBudget };
-}
-
-const r = (minor: number) => `R${(minor / 100).toFixed(2)}`;
-
-/**
- * The minimal, de-identified summary an AI request may see: category-level
- * totals the app already calculated. No descriptions, accounts, dates of
- * individual transactions, names or emails.
- */
-export function aiContext(insights: MonthInsights) {
-  return {
-    month: insights.month,
-    statementCoverage: insights.coverage.coversWholeMonth ? "whole month" : insights.coverage.hasImports ? "partial month" : "none",
-    moneyIn: r(insights.totals.moneyInMinor),
-    moneyOut: r(insights.totals.moneyOutMinor),
-    net: r(insights.totals.netMinor),
-    moneyOutVsLastMonth:
-      insights.totals.moneyOutChangePercent === null ? "not comparable" : `${insights.totals.moneyOutChangePercent}%`,
-    topCategories: insights.topCategories.map((c) => ({ category: c.name, spent: r(c.totalMinor), transactions: c.count })),
-    biggestChanges: insights.changes.map((c) => ({
-      category: c.name,
-      thisMonth: r(c.totalMinor),
-      lastMonth: r(c.previousMinor),
-      change: r(c.changeMinor),
-      changePercent: c.changePercent,
-    })),
-    unusualIncreases: insights.unusual.map((u) => ({ category: u.name, thisMonth: r(u.totalMinor), usualAverage: r(u.averageMinor) })),
-    budget: insights.budget.limits.map((l) => ({ category: l.name, limit: r(l.limitMinor), spent: r(l.spentMinor), status: l.status })),
-    savingOpportunities: {
-      ifYouTrim: insights.savings.trims.map((t) => ({
-        category: t.name,
-        spentThisMonth: r(t.spentMinor),
-        save10PercentPerMonth: r(t.save10PercentMinor),
-        save25PercentPerMonth: r(t.save25PercentMinor),
-        save25PercentPerYear: r(t.save25PercentYearlyMinor),
-      })),
-      overBudget: insights.savings.overBudget.map((o) => ({ category: o.name, overBy: r(o.overByMinor) })),
-    },
-    limitations: insights.limitations,
-  };
 }

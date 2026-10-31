@@ -18,6 +18,13 @@ const summary = (over: Partial<StatementSummary> = {}): StatementSummary => ({
   createdAt: '2026-10-24T10:00:00Z',
   warnings: [],
   validation: {
+    parser: 'column-v2',
+    detectedBank: 'FNB',
+    layoutDetected: true,
+    newestFirst: false,
+    rowsSkipped: 0,
+    feeRows: 0,
+    columnTotalsCheck: 'unavailable',
     balanceCheck: 'passed',
     totalsCheck: 'passed',
     mismatchedRows: 0,
@@ -42,6 +49,9 @@ const row = (over: Partial<ReviewRow> = {}): ReviewRow => ({
   extractionConfidence: 0.98,
   categoryConfidence: 0.85,
   include: true,
+  channel: 'card_purchase',
+  channelLabel: 'Card purchase',
+  flags: [],
   duplicateDecision: null,
   duplicateOf: null,
   ...over,
@@ -126,6 +136,36 @@ describe('Upload', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Read statement' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('This PDF is password-protected.')
   })
+
+  it('points to the earlier upload when the same file is uploaded again', async () => {
+    fakeBackend({
+      ...signedInRoutes,
+      'GET /api/statements/formats': () => ({ formats: [] }),
+      'POST /api/statements/upload': () =>
+        apiError(409, 'duplicate_statement', "You've already imported this exact statement.", { existingImportId: 'imp-old' }),
+    })
+    const { container } = renderApp('/statements/upload')
+    await screen.findByRole('heading', { name: 'Upload a statement' })
+    await userEvent.upload(container.querySelector('input[type="file"]') as HTMLInputElement, new File(['%PDF'], 'a.pdf', { type: 'application/pdf' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Read statement' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent("You've already imported this exact statement.")
+    expect(screen.getByRole('link', { name: 'Open the earlier upload' })).toHaveAttribute('href', '/statements/imp-old')
+  })
+
+  it('lists which banks have bank-specific rules', async () => {
+    fakeBackend({
+      ...signedInRoutes,
+      'GET /api/statements/formats': () => ({
+        formats: [
+          { key: 'capitec', name: 'Capitec', status: 'beta', support: 'layout_rules', notes: 'Money in / Money out / Fee / Balance layout.' },
+          { key: 'investec', name: 'Investec', status: 'beta', support: 'generic', notes: null },
+        ],
+      }),
+    })
+    renderApp('/statements/upload')
+    expect(await screen.findByText(/Money in \/ Money out \/ Fee \/ Balance layout/)).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Investec (general rules)' })).toBeInTheDocument()
+  })
 })
 
 describe('Review and import', () => {
@@ -184,6 +224,46 @@ describe('Review and import', () => {
     const excludedRow = screen.getByText('Checkers Sandton', { selector: '.review-row__text strong' }).closest('li')!
     expect(excludedRow).toHaveClass('review-row--excluded')
     expect(within(excludedRow).getByRole('button', { name: /duplicate — skip it/ })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('shows row checks, and imports only after flagged rows are checked and warnings acknowledged', async () => {
+    const mismatch = row({
+      id: 'row-2',
+      rowIndex: 1,
+      description: 'Engen Fuel',
+      reviewStatus: 'needs_review',
+      extractionConfidence: 0.4,
+      flags: [{ code: 'balance_mismatch', label: "Doesn't match the running balance", blocking: true }],
+    })
+    const { calls } = fakeBackend({
+      ...signedInRoutes,
+      'GET /api/categories': () => ({ categories }),
+      'GET /api/statements/:id': () => ({
+        statement: summary({ warnings: ["1 row(s) don't match the running balance."], validation: { ...summary().validation, balanceCheck: 'mismatch', mismatchedRows: 1 } }),
+        reviewing: true,
+        rows: [row(), mismatch],
+      }),
+      'PATCH /api/statements/:id/rows/:rowId': () => null,
+      'POST /api/statements/:id/confirm': () => ({ saved: 2 }),
+    })
+    renderApp('/statements/imp-1')
+    expect(await screen.findByText("Doesn't match the running balance")).toBeInTheDocument()
+    expect(screen.getByText('Low confidence')).toBeInTheDocument()
+    expect(screen.getByText(/Card purchase/, { selector: 'small' })).toBeInTheDocument()
+
+    const importButton = screen.getByRole('button', { name: 'Import 2 transactions' })
+    expect(importButton).toBeDisabled()
+    expect(screen.getByText('Check 1 row marked for review first.')).toBeInTheDocument()
+    // Balance mismatches can't be waved through in bulk
+    expect(screen.queryByRole('button', { name: 'Mark all as checked' })).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Looks right' }))
+    expect(importButton).toBeDisabled() // warnings still need acknowledging
+    await userEvent.click(screen.getByLabelText(/read the warnings above/))
+    expect(importButton).toBeEnabled()
+    await userEvent.click(importButton)
+    await screen.findByText(/Imported 2 transactions/)
+    expect(calls.find((c) => c.path === '/api/statements/imp-1/confirm')!.body).toEqual({ acknowledgeWarnings: true })
   })
 
   it('tells the user the totals are from the statement, not a live balance', async () => {

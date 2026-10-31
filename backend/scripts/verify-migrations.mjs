@@ -49,12 +49,12 @@ const fails = async (uid, sql, re) => {
 
 const one = async (uid, sql) => (await as(uid, sql)).rows[0];
 
-check("seed: 24 system categories", ((await db.query("select count(*)::int n from public.categories where user_id is null")).rows[0].n === 24));
+check("seed: 26 system categories", ((await db.query("select count(*)::int n from public.categories where user_id is null")).rows[0].n === 26));
 check("signup trigger creates preferences with display name",
   (await db.query(`select display_name, currency from public.user_preferences where user_id='${A}'`)).rows[0]?.display_name === "Hadi");
 
 check("anon cannot read categories", await fails(null, "select * from public.categories"));
-check("user sees system categories", (await one(A, "select count(*)::int n from public.categories")).n === 24);
+check("user sees system categories", (await one(A, "select count(*)::int n from public.categories")).n === 26);
 check("user cannot edit system category", (await as(A, "update public.categories set name='x' where key='groceries' returning id")).rows.length === 0);
 
 // A creates an import with staged rows
@@ -76,7 +76,11 @@ check("B cannot confirm A's import", await fails(B, `select public.confirm_impor
 check("float/zero amount rejected", await fails(A, `insert into public.staged_transactions (import_id,row_index,transaction_date,cleaned_description,amount_minor,direction)
     values ('${imp}',8,'2026-09-02','x',0,'outflow')`));
 
+check("rows still marked for review block confirm", await fails(A, `select public.confirm_import('${imp}')`, /review/i));
+check("unknown validation flag rejected", await fails(A, `update public.staged_transactions set flags='{made_up}' where import_id='${imp}'`));
+await as(A, `update public.staged_transactions set review_status='user_confirmed', channel='card_purchase', flags='{balance_mismatch}' where import_id='${imp}'`);
 const saved = (await one(A, `select public.confirm_import('${imp}') n`)).n;
+check("channel is copied to saved transactions", (await one(A, "select channel from public.transactions where cleaned_description='Checkers'")).channel === "card_purchase");
 check("confirm saves 2 included rows", saved === 2);
 const after = await one(A, `select status, transaction_count, imported_at is not null done from public.statement_imports where id='${imp}'`);
 check("import marked imported with count 2", after.status === "imported" && after.transaction_count === 2 && after.done);
@@ -93,14 +97,23 @@ await as(A, `insert into public.staged_transactions (import_id,row_index,transac
 check("unresolved duplicate blocks confirm", await fails(A, `select public.confirm_import('${imp2}')`, /duplicate/i));
 check("duplicate without decision rejected", await fails(A, `insert into public.staged_transactions (import_id,row_index,transaction_date,cleaned_description,amount_minor,direction,duplicate_of_transaction_id)
   values ('${imp2}',5,'2026-09-02','x',1,'outflow','${existing}')`));
-await as(A, `update public.staged_transactions set duplicate_decision='exclude' where row_index=0 and import_id='${imp2}'`);
-check("excluded duplicate is skipped", (await one(A, `select public.confirm_import('${imp2}') n`)).n === 1);
+await as(A, `update public.staged_transactions set duplicate_decision='exclude', review_status='user_confirmed' where row_index=0 and import_id='${imp2}'`);
+await as(A, `update public.staged_transactions set review_status='auto_accepted' where row_index=1 and import_id='${imp2}'`);
+check("warnings must be acknowledged", await fails(A, `select public.confirm_import('${imp2}')`, /warnings/i));
+check("excluded duplicate is skipped", (await one(A, `select public.confirm_import('${imp2}', true) n`)).n === 1);
 check("warnings -> status partial", (await one(A, `select status from public.statement_imports where id='${imp2}'`)).status === "partial");
 
 // Edits and deletes
 check("B cannot update A's transaction", (await as(B, `update public.transactions set amount_minor=1 returning id`)).rows.length === 0);
 await as(A, `delete from public.transactions where cleaned_description='Salary'`);
 check("deleting a transaction lowers import count", (await one(A, `select transaction_count n from public.statement_imports where id='${imp}'`)).n === 1);
+
+// An import where every row is left out is refused (it would fake a covered month)
+const impE = (await one(A, `insert into public.statement_imports (bank_format_key, period_start, period_end) values ('fnb','2026-11-01','2026-11-30') returning id`)).id;
+await as(A, `insert into public.staged_transactions (import_id,row_index,transaction_date,cleaned_description,amount_minor,direction,review_status,include) values ('${impE}',0,'2026-11-02','x',10,'outflow','auto_accepted',false)`);
+check("empty import refused and nothing changes", (await fails(A, `select public.confirm_import('${impE}')`, /no rows/i)) &&
+  (await one(A, `select status from public.statement_imports where id='${impE}'`)).status === "staged");
+await as(A, `select public.cancel_import('${impE}')`);
 
 // Cancel
 const imp3 = (await one(A, `insert into public.statement_imports (bank_format_key, period_start, period_end) values ('capitec','2026-10-01','2026-10-31') returning id`)).id;
@@ -156,6 +169,7 @@ const C = "33333333-3333-3333-3333-333333333333";
 await db.exec(`insert into auth.users (id, email) values ('${C}', 'c@x.co')`);
 const impC = (await one(C, `insert into public.statement_imports (bank_format_key, period_start, period_end) values ('fnb','2026-09-01','2026-09-30') returning id`)).id;
 await as(C, `insert into public.staged_transactions (import_id,row_index,transaction_date,cleaned_description,amount_minor,direction) values ('${impC}',0,'2026-09-02','x',10,'outflow'),('${impC}',1,'2026-09-03','y',20,'outflow')`);
+await as(C, `update public.staged_transactions set review_status='auto_accepted'`);
 await as(C, `select public.confirm_import('${impC}')`);
 let deleteError = null;
 try { await db.exec(`delete from auth.users where id='${C}'`); } catch (e) { deleteError = e.message; }

@@ -19,6 +19,13 @@ export type StatementSummary = {
   createdAt: string
   warnings: string[]
   validation: {
+    parser: string
+    detectedBank: string | null
+    layoutDetected: boolean
+    newestFirst: boolean
+    rowsSkipped: number
+    feeRows: number
+    columnTotalsCheck: 'passed' | 'failed' | 'unavailable'
     balanceCheck: 'passed' | 'mismatch' | 'unavailable'
     totalsCheck: 'passed' | 'failed' | 'unavailable'
     mismatchedRows: number
@@ -28,6 +35,8 @@ export type StatementSummary = {
     rowCount: number
   }
 }
+
+export type RowFlag = { code: string; label: string; blocking: boolean }
 
 export type ReviewRow = {
   id: string
@@ -42,6 +51,9 @@ export type ReviewRow = {
   extractionConfidence: number | null
   categoryConfidence: number | null
   include: boolean
+  channel: string
+  channelLabel: string
+  flags: RowFlag[]
   duplicateDecision: 'unresolved' | 'keep_both' | 'exclude' | null
   duplicateOf: {
     id: string
@@ -62,6 +74,8 @@ export type SavedRow = {
   categoryId: string | null
   transactionType: TransactionType
   reviewStatus: string
+  channel?: string
+  channelLabel?: string
 }
 
 export type StatementDetail =
@@ -69,11 +83,13 @@ export type StatementDetail =
   | { statement: StatementSummary; reviewing: false; rows: SavedRow[] }
 
 export type Category = { id: string; key: string; name: string; isSystem: boolean }
-export type BankFormat = { key: string; name: string; status: 'beta' }
+export type BankFormat = { key: string; name: string; status: 'beta'; support: 'layout_rules' | 'generic'; notes: string | null }
 
 export type UploadResult = {
   importId: string
   rowCount: number
+  bankName: string
+  period: { start: string; end: string }
   needsReview: number
   duplicates: number
   warnings: string[]
@@ -130,6 +146,8 @@ export type Transaction = {
   categoryName: string | null
   excludedFromTotals: boolean
   importId: string
+  channel: string
+  channelLabel: string
   source: { bankName: string; nickname: string | null } | null
 }
 
@@ -196,8 +214,23 @@ export type ProfileData = {
   currency: string
   monthlyBudgetTargetMinor: number | null
   savingsTargetMinor: number | null
+  expectedMonthlyIncomeMinor: number | null
   setupCompleted: boolean
   ai: { available: boolean; consent: AiConsent; consentUpdatedAt: string | null; policyVersion: string }
+}
+
+export type HealthLevel = 'healthy' | 'watch' | 'at_risk' | 'not_enough_data'
+export type Health = {
+  level: HealthLevel
+  provisional: boolean
+  reasons: { code: string; tone: 'good' | 'warning' | 'risk' | 'info'; text: string }[]
+}
+export type SavingsRate = { basisPoints: number | null; percent: number | null }
+export type Goals = {
+  expectedIncomeMinor: number | null
+  savingsTargetMinor: number | null
+  monthlySpendingTargetMinor: number | null
+  savingsTargetMet: boolean | null
 }
 
 export type Insights = {
@@ -211,9 +244,15 @@ export type Insights = {
     unclassifiedInMinor: number
     previousMoneyOutMinor: number | null
     moneyOutChangePercent: number | null
+    income: { salary: number; side: number; other: number }
+    debitOrders: { total: number; count: number }
+    transfersMinor: number
   }
+  savingsRate: SavingsRate
+  health: Health
+  goals: Goals
   comparison: { month: string; available: boolean; reason: string | null }
-  topCategories: { categoryId: string | null; name: string; totalMinor: number; count: number }[]
+  topCategories: { categoryId: string | null; name: string; totalMinor: number; count: number; sharePercent: number | null }[]
   changes: { categoryId: string | null; name: string; totalMinor: number; previousMinor: number; changeMinor: number; changePercent: number | null }[]
   unusual: { categoryId: string | null; name: string; totalMinor: number; averageMinor: number; months: number }[]
   unusualCheck: { available: boolean; historyMonths: number; reason: string | null }
@@ -221,7 +260,31 @@ export type Insights = {
   limitations: string[]
 }
 
-export type AiAnswer = { text: string; basedOn: unknown; generatedAt: string }
+export type AiVerification = { numbersChecked: number; pointsRemoved: number; attempts: number }
+
+export type CoachAnswer = {
+  summary: string
+  positives: string[]
+  concerns: string[]
+  actions: string[]
+  motivation: string
+}
+
+export type CoachResult = {
+  coach: CoachAnswer
+  verification: AiVerification
+  basedOn: Record<string, unknown>
+  generatedAt: string
+  source: 'ai_generated'
+}
+
+export type BudgetReviewResult = {
+  review: { summary: string; suggestions: string[] }
+  verification: AiVerification
+  basedOn: Record<string, unknown>
+  generatedAt: string
+  source: 'ai_generated'
+}
 
 /** Signed-in API calls. Each one sends the access token and refreshes it if needed. */
 export function useApi() {
@@ -257,7 +320,15 @@ export function useApi() {
 
       profile: {
         get: () => authRequest<{ profile: ProfileData }>('/api/profile').then((r) => r.profile),
-        update: (patch: Partial<{ displayName: string | null; monthlyBudgetTargetMinor: number | null; savingsTargetMinor: number | null; setupCompleted: true }>) =>
+        update: (
+          patch: Partial<{
+            displayName: string | null
+            monthlyBudgetTargetMinor: number | null
+            savingsTargetMinor: number | null
+            expectedMonthlyIncomeMinor: number | null
+            setupCompleted: true
+          }>,
+        ) =>
           authRequest<{ profile: ProfileData }>('/api/profile', { method: 'PATCH', body: patch }).then((r) => r.profile),
         setAiConsent: (granted: boolean) =>
           authRequest<{ profile: ProfileData }>('/api/profile/ai-consent', { method: 'POST', body: { granted } }).then((r) => r.profile),
@@ -269,11 +340,13 @@ export function useApi() {
 
       insights: {
         get: (month: string) => authRequest<{ insights: Insights; ai: { available: boolean } }>(`/api/insights?month=${month}`),
-        explain: (month: string) => authRequest<AiAnswer>('/api/insights/explain', { method: 'POST', body: { month } }),
+        coachPreview: (month: string) =>
+          authRequest<{ input: Record<string, unknown>; ai: { available: boolean } }>(`/api/coach/preview?month=${month}`),
+        coach: (month: string) => authRequest<CoachResult>('/api/coach', { method: 'POST', body: { month } }),
         budgetSuggestions: (
           month: string,
           plan: { expectedIncomeMinor: number | null; savingsTargetMinor: number | null; limits: { name: string; limitMinor: number; averageMinor: number | null }[] },
-        ) => authRequest<AiAnswer>('/api/budget-suggestions', { method: 'POST', body: { month, plan } }),
+        ) => authRequest<BudgetReviewResult>('/api/budget-suggestions', { method: 'POST', body: { month, plan } }),
       },
 
       categories: () => authRequest<{ categories: Category[] }>('/api/categories').then((r) => r.categories),
@@ -288,8 +361,9 @@ export function useApi() {
           authRequest<null>(`/api/statements/${id}`, { method: 'PATCH', body }),
         updateRow: (id: string, rowId: string, body: RowPatch) =>
           authRequest<null>(`/api/statements/${id}/rows/${rowId}`, { method: 'PATCH', body }),
-        acceptAll: (id: string) => authRequest<null>(`/api/statements/${id}/accept-all`, { method: 'POST' }),
-        confirm: (id: string) => authRequest<{ saved: number }>(`/api/statements/${id}/confirm`, { method: 'POST' }),
+        acceptAll: (id: string) => authRequest<{ accepted: number }>(`/api/statements/${id}/accept-all`, { method: 'POST' }),
+        confirm: (id: string, acknowledgeWarnings = false) =>
+          authRequest<{ saved: number }>(`/api/statements/${id}/confirm`, { method: 'POST', body: { acknowledgeWarnings } }),
         cancel: (id: string) => authRequest<null>(`/api/statements/${id}/cancel`, { method: 'POST' }),
         remove: (id: string) => authRequest<null>(`/api/statements/${id}`, { method: 'DELETE' }),
       },

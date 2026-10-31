@@ -47,6 +47,8 @@ const tx = (i: number): Transaction => ({
   categoryName: null,
   excludedFromTotals: false,
   importId: 'imp-1',
+  channel: 'card_purchase',
+  channelLabel: 'Card purchase',
   source: null,
 })
 
@@ -87,7 +89,7 @@ describe('paged lists in the app', () => {
     const rows: ReviewRow[] = Array.from({ length: 30 }, (_, i) => ({
       id: `r${i}`, rowIndex: i, date: '2026-09-01', description: `Row ${i + 1}`, amountMinor: 100, direction: 'outflow',
       categoryId: null, transactionType: 'expense', reviewStatus: 'auto_accepted', extractionConfidence: 1, categoryConfidence: 1,
-      include: true, duplicateDecision: null, duplicateOf: null,
+      include: true, channel: 'card_purchase', channelLabel: 'Card purchase', flags: [], duplicateDecision: null, duplicateOf: null,
     }))
     fakeBackend({
       ...signedInRoutes,

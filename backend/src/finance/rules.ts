@@ -17,7 +17,8 @@ export type FinanceRow = {
   transaction_type: TransactionType;
   excluded_from_totals: boolean;
   category_id?: string | null;
-  categories?: { name: string } | { name: string }[] | null;
+  categories?: { name: string; key?: string } | { name: string; key?: string }[] | null;
+  channel?: string | null;
 };
 
 export function categoryNameOf(row: FinanceRow): string | null {
@@ -25,12 +26,17 @@ export function categoryNameOf(row: FinanceRow): string | null {
   return c?.name ?? null;
 }
 
+export function categoryKeyOf(row: FinanceRow): string | null {
+  const c = Array.isArray(row.categories) ? row.categories[0] : row.categories;
+  return c?.key ?? null;
+}
+
 /** Counts toward spending (money out)? */
 export function isSpending(row: FinanceRow): boolean {
   return !row.excluded_from_totals && row.direction === "outflow" && row.transaction_type !== "transfer";
 }
 
-export type CategoryTotal = { categoryId: string | null; name: string; total: number; count: number };
+export type CategoryTotal = { categoryId: string | null; key: string | null; name: string; total: number; count: number };
 
 export function summarise(rows: FinanceRow[]) {
   let moneyIn = 0;
@@ -38,6 +44,9 @@ export function summarise(rows: FinanceRow[]) {
   let refunds = 0;
   let unclassifiedIn = 0;
   let transfers = 0;
+  const income = { salary: 0, side: 0, other: 0 };
+  let debitOrders = 0;
+  let debitOrderCount = 0;
   const categories = new Map<string, CategoryTotal>();
 
   for (const row of rows) {
@@ -48,15 +57,26 @@ export function summarise(rows: FinanceRow[]) {
       continue;
     }
     if (row.direction === "inflow") {
-      if (row.transaction_type === "income") moneyIn += amount;
+      if (row.transaction_type === "income") {
+        moneyIn += amount;
+        const key = categoryKeyOf(row);
+        if (key === "salary") income.salary += amount;
+        else if (key === "side_income") income.side += amount;
+        else income.other += amount;
+      }
       else if (row.transaction_type === "refund") refunds += amount;
       else unclassifiedIn += amount; // unknown, or an "expense" marked as money in
       continue;
     }
     expenses += amount;
+    if (row.channel === "debit_order") {
+      debitOrders += amount;
+      debitOrderCount += 1;
+    }
     const key = row.category_id ?? "none";
     const entry = categories.get(key) ?? {
       categoryId: row.category_id ?? null,
+      key: categoryKeyOf(row),
       name: categoryNameOf(row) ?? "Uncategorised",
       total: 0,
       count: 0,
@@ -75,6 +95,8 @@ export function summarise(rows: FinanceRow[]) {
     refunds,
     transfers,
     unclassifiedIn,
+    income,
+    debitOrders: { total: debitOrders, count: debitOrderCount },
     categories: [...categories.values()].sort((a, b) => b.total - a.total),
   };
 }
@@ -83,8 +105,17 @@ export function summarise(rows: FinanceRow[]) {
 // Months and statement coverage
 // ---------------------------------------------------------------------------
 
-export function currentMonth(): string {
-  return new Date().toISOString().slice(0, 7);
+/** South Africa is UTC+2 all year (no daylight saving). */
+const SAST_OFFSET_MS = 2 * 60 * 60 * 1000;
+
+/** Today's date in South Africa, "YYYY-MM-DD". */
+export function todaySast(now: Date = new Date()): string {
+  return new Date(now.getTime() + SAST_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+/** The current month in South Africa, so 00:30 on the 1st is already the new month. */
+export function currentMonth(now: Date = new Date()): string {
+  return todaySast(now).slice(0, 7);
 }
 
 export function isMonth(value: unknown): value is string {
