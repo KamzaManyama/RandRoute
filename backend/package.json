@@ -18,7 +18,7 @@
   "license": "UNLICENSED",
   "type": "module",
   "dependencies": {
-    "@google/genai": "^2.31.0",
+    "@google/genai": "^2.32.0",
     "@supabase/supabase-js": "^2.118.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
